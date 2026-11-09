@@ -31,7 +31,27 @@ namespace Nucleus.Integrations.Unity.Transports
         public string AdapterTag => _steamNetworkingTransport.Addressing is SteamAddressing.IpAddress ? IpAddressAdapterTag : SteamIdAdapterTag;
 
         /// <inheritdoc/>
-        public string HostedCredential => IsHostingLinkUp ? _hostedCredential : string.Empty;
+        /// <remarks>
+        /// A server started some other way than <see cref="StartHostingAsync"/>, which is how a session opens on its own, is named the
+        /// first time this is read while it is up, and forgotten once it is down.
+        /// </remarks>
+        public string HostedCredential
+        {
+            get
+            {
+                if (!IsHostingLinkUp)
+                {
+                    _hostedCredential = string.Empty;
+
+                    return string.Empty;
+                }
+
+                if (_hostedCredential.Length == 0 && TryGetHostedCredential(out string hostedCredential))
+                    _hostedCredential = hostedCredential;
+
+                return _hostedCredential;
+            }
+        }
 
         /// <inheritdoc/>
         public bool IsHostingLinkUp => IsLinkUp(Invoker.Server);
@@ -65,7 +85,7 @@ namespace Nucleus.Integrations.Unity.Transports
         private readonly SteamNetworkingTransport _steamNetworkingTransport;
 
         /// <summary>
-        /// Where the session this peer is hosting can be reached, set when hosting starts.
+        /// Where the session this peer is hosting can be reached, set when hosting starts or when first asked for.
         /// </summary>
         private string _hostedCredential = string.Empty;
 

@@ -13,9 +13,11 @@ namespace Nucleus.Integrations.Unity.Transports
         /// Whether the session registers with a directory so it survives losing whoever is hosting it.
         /// </summary>
         /// <remarks>
-        /// Read when the transport is added. With it set, nobody passes a Steam ID or an address around: the host opens a session with
-        /// <see cref="StartHostingSessionAsync"/>, and a peer joins with <see cref="JoinSessionAsync"/> and the <see cref="SessionId"/>
-        /// the host handed out, which keeps working after a handover when the old host's Steam ID or address no longer does.
+        /// Read when the transport is added. With it set, a game starts and joins as it would without it: a server opens a session with
+        /// the directory once it is running, and every client that authenticates is told which session it is in, so a peer that joined
+        /// by Steam ID or address survives losing that host. <see cref="StartHostingSessionAsync"/> and <see cref="JoinSessionAsync"/>
+        /// remain for driving the directory directly. A server that cannot open its session raises
+        /// <see cref="NewfarmHostMigration.SessionOpenFailed"/> on <see cref="Migration"/>.
         /// Sessions need Nucleus Pro. This compiles in both editions, but with a Free <c>Nucleus.dll</c>
         /// <see cref="Nucleus.Managers.Server.ServerManager.IsHostMigrationAvailable"/> reads <see langword="false"/> and every session call
         /// returns <see langword="false"/>.

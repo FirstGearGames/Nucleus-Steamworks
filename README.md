@@ -38,16 +38,20 @@ Place this folder in your project, for example at `Assets/Nucleus/Integrations/S
 
 ## Host migration (Nucleus Pro)
 
-With host migration on, a session outlives whoever is hosting it. When the host leaves or crashes, one of the remaining players takes over, the others reconnect to them, and play carries on with the world they already had. Players never pass a Steam ID or an address around: they find each other through a session id.
+With host migration on, a session outlives whoever is hosting it. When the host leaves or crashes, one of the remaining players takes over, the others reconnect to them, and play carries on with the world they already had.
 
-It needs Nucleus Pro and a running [Newfarm](https://github.com/FirstGearGames/Newfarm) session directory, which every player can reach. The code compiles with Nucleus Free too, but there every session call logs an error and returns `false`.
+It needs Nucleus Pro and a running [Newfarm](https://github.com/FirstGearGames/Newfarm) session directory, which every player can reach. The code compiles with Nucleus Free too, but there no session is opened.
 
 1. On the **Steam Transport**, turn on **Is Host Migration Enabled** (under **Host Migration**) and set the **Directory Address** and **Directory Port** (default `127.0.0.1:47778`).
-2. The host calls `await steamTransport.StartHostingSessionAsync()` and hands out `steamTransport.SessionId`.
-3. Each player joining calls `await steamTransport.JoinSessionAsync(sessionId)`.
-4. To hand hosting to someone else on purpose, the host calls `steamTransport.TrySurrenderHostingSession()`. It stays in the game as an ordinary player.
+2. Start and join exactly as you would without it, as in the quick start above.
 
-`steamTransport.Migration` raises `Promoted` when this player takes over, `Rejoined` when it follows the session to a new host, and `Abandoned` when the session could not be carried on.
+That is all. Once the server is running it opens a session with the directory, and every player that joins is told which session it is in, so nobody hands out anything new.
+
+If the server cannot open its session, `steamTransport.Migration.SessionOpenFailed` is raised with a `SessionOpenResult` saying why, such as `DirectoryUnreachable` or `DirectoryAtCapacity`. The game carries on without host migration, and `await steamTransport.Migration.OpenSessionAsync()` tries again and returns the result.
+
+To hand hosting to someone else on purpose, the host calls `steamTransport.TrySurrenderHostingSession()`. It stays in the game as an ordinary player.
+
+`steamTransport.Migration` also raises `Promoted` when this player takes over, `Rejoined` when it follows the session to a new host, and `Abandoned` when the session could not be carried on. A player joining after a handover needs the new host's Steam ID, or can call `JoinSessionAsync(steamTransport.SessionId)` with the session id read on any player already in it.
 
 When players connect by IP, the host advertises **Hosted Address**. Leave it empty to use the bind address, or this machine's own IPv4 address, which only reaches players on the same network. A host reached through a router sets it to its public address with a forwarded port.
 
