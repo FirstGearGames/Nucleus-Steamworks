@@ -161,15 +161,10 @@ namespace Nucleus.Integrations.Unity.Transports
         /// <summary>
         /// Sends a message on a connection.
         /// </summary>
-        /// <returns>True when Steam accepted the message.</returns>
-        internal static bool SendMessageToConnection(bool isGameServer, HSteamNetConnection connection, IntPtr data, uint length, int sendFlags)
-        {
-            EResult result = isGameServer
-                ? SteamGameServerNetworkingSockets.SendMessageToConnection(connection, data, length, sendFlags, out _)
-                : SteamNetworkingSockets.SendMessageToConnection(connection, data, length, sendFlags, out _);
-
-            return result is EResult.k_EResultOK;
-        }
+        /// <returns><c>k_EResultOK</c> when Steam accepted the message, otherwise Steam's reason for refusing it.</returns>
+        internal static EResult SendMessageToConnection(bool isGameServer, HSteamNetConnection connection, IntPtr data, uint length, int sendFlags) => isGameServer
+            ? SteamGameServerNetworkingSockets.SendMessageToConnection(connection, data, length, sendFlags, out _)
+            : SteamNetworkingSockets.SendMessageToConnection(connection, data, length, sendFlags, out _);
 
         /// <summary>
         /// Takes up to <paramref name="messages"/>.Length waiting messages from every connection in a poll group.

@@ -1,4 +1,8 @@
+using System;
+using CodeBoost.Logging;
+using Nucleus.Connections;
 using Nucleus.Transports;
+using Steamworks;
 
 namespace Nucleus.Integrations.Unity.Transports
 {
@@ -26,6 +30,24 @@ namespace Nucleus.Integrations.Unity.Transports
     /// </remarks>
     public class SteamNetworkingTransport : SocketPairTransport<SteamNetworkingServerSocket, SteamNetworkingClientSocket>
     {
+        /// <summary>
+        /// Raised when Steam refuses a packet either side of this transport hands it, carrying Steam's reason.
+        /// </summary>
+        /// <remarks>
+        /// The packet is dropped, and the engine is told so, whatever a handler does. Raised on the main thread, from inside the send.
+        /// <c>k_EResultLimitExceeded</c> means Steam's queue for that connection is full, usually because the send rate is below what the
+        /// game sends; <c>k_EResultNoConnection</c> and <c>k_EResultInvalidState</c> mean the connection has closed or is not open yet.
+        /// </remarks>
+        public event SendFailedHandler SendFailed;
+        /// <summary>
+        /// Handler for the <see cref="SendFailed"/> event.
+        /// </summary>
+        /// <param name="invoker">Which side of this transport was sending.</param>
+        /// <param name="connection">Who the packet was for.</param>
+        /// <param name="channel">The channel it was sent on.</param>
+        /// <param name="result">Steam's reason for refusing it.</param>
+        public delegate void SendFailedHandler(Invoker invoker, Connection connection, Channel channel, EResult result);
+
         /// <summary>
         /// How peers find each other: by Steam ID through Valve's relay network, or by IP address and port.
         /// </summary>
@@ -89,6 +111,25 @@ namespace Nucleus.Integrations.Unity.Transports
         /// not have this one, as opposed to a peer that never answered.
         /// </summary>
         internal bool IsLastConnectRefused => ClientSocket is not null && ClientSocket.IsLastConnectRefused;
+
+        /// <summary>
+        /// Raises <see cref="SendFailed"/>, keeping a handler that throws from breaking the send it was raised from.
+        /// </summary>
+        /// <param name="invoker">Which side of this transport was sending.</param>
+        /// <param name="connection">Who the packet was for.</param>
+        /// <param name="channel">The channel it was sent on.</param>
+        /// <param name="result">Steam's reason for refusing it.</param>
+        internal void NotifySendFailed(Invoker invoker, Connection connection, Channel channel, EResult result)
+        {
+            try
+            {
+                SendFailed?.Invoke(invoker, connection, channel, result);
+            }
+            catch (Exception exception)
+            {
+                Logger<SteamNetworkingTransport>.LogError($"A [{nameof(SendFailed)}] handler threw: [{exception}].");
+            }
+        }
 
         /// <inheritdoc/>
         /// <remarks>Steam traffic is always a real network path, even between two clients on one machine, so the security checks stay on.</remarks>

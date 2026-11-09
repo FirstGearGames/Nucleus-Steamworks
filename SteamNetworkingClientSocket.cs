@@ -281,10 +281,18 @@ namespace Nucleus.Integrations.Unity.Transports
                 return;
             }
 
-            if (SteamMessages.TrySend(isGameServer: false, _steamConnection, outgoingPacket.Channel, outgoingPacket.Payload))
+            EResult sendResult = SteamMessages.Send(isGameServer: false, _steamConnection, outgoingPacket.Channel, outgoingPacket.Payload);
+
+            if (sendResult is EResult.k_EResultOK)
+            {
                 Nucleus.Managers.Transports.TransportManager.PacketOffloaded(outgoingPacket);
-            else
-                Nucleus.Managers.Transports.TransportManager.PacketFailed(outgoingPacket);
+
+                return;
+            }
+
+            Nucleus.Managers.Transports.TransportManager.PacketFailed(outgoingPacket);
+
+            ((SteamNetworkingTransport)Transport).NotifySendFailed(Invoker.Client, outgoingPacket.Receiver, outgoingPacket.Channel, sendResult);
         }
 
         /// <inheritdoc/>

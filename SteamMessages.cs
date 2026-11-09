@@ -65,15 +65,15 @@ namespace Nucleus.Integrations.Unity.Transports
         /// <param name="connection">The connection to send on.</param>
         /// <param name="channel">The channel the engine chose.</param>
         /// <param name="payload">The payload, which Steam copies before this returns.</param>
-        /// <returns>True when Steam accepted the payload.</returns>
+        /// <returns><c>k_EResultOK</c> when Steam accepted the payload, otherwise Steam's reason for refusing it.</returns>
         /// <remarks>
         /// Sent without Nagle's delay, because the engine already gathers a tick's data into as few packets as it can, and holding them
         /// longer would only add latency.
         /// </remarks>
-        internal static bool TrySend(bool isGameServer, HSteamNetConnection connection, Channel channel, ArraySegment<byte> payload)
+        internal static EResult Send(bool isGameServer, HSteamNetConnection connection, Channel channel, ArraySegment<byte> payload)
         {
             if (payload.Array is null)
-                return false;
+                return EResult.k_EResultInvalidParam;
 
             int sendFlags = channel is Channel.Reliable ? Constants.k_nSteamNetworkingSend_ReliableNoNagle : Constants.k_nSteamNetworkingSend_UnreliableNoNagle;
 

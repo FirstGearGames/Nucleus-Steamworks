@@ -49,6 +49,11 @@ namespace Nucleus.Integrations.Unity.Transports
         private readonly Dictionary<Connection, HSteamNetConnection> _steamConnectionsByConnection = new();
 
         /// <summary>
+        /// Steam connections that have sent a message while not registered, each already reported once.
+        /// </summary>
+        private readonly HashSet<HSteamNetConnection> _unknownSteamConnections = new();
+
+        /// <summary>
         /// Clients that joined or left since the last receive pass, applied there so the engine's state changes never run inside a Steam
         /// callback.
         /// </summary>
@@ -202,10 +207,18 @@ namespace Nucleus.Integrations.Unity.Transports
                 return;
             }
 
-            if (SteamMessages.TrySend(IsGameServer, steamConnection, outgoingPacket.Channel, outgoingPacket.Payload))
+            EResult sendResult = SteamMessages.Send(IsGameServer, steamConnection, outgoingPacket.Channel, outgoingPacket.Payload);
+
+            if (sendResult is EResult.k_EResultOK)
+            {
                 Nucleus.Managers.Transports.TransportManager.PacketOffloaded(outgoingPacket);
-            else
-                Nucleus.Managers.Transports.TransportManager.PacketFailed(outgoingPacket);
+
+                return;
+            }
+
+            Nucleus.Managers.Transports.TransportManager.PacketFailed(outgoingPacket);
+
+            ((SteamNetworkingTransport)Transport).NotifySendFailed(Invoker.Server, outgoingPacket.Receiver, outgoingPacket.Channel, sendResult);
         }
 
         /// <inheritdoc/>
@@ -230,9 +243,19 @@ namespace Nucleus.Integrations.Unity.Transports
                         ArraySegment<byte> payload = SteamMessages.TakePayload(_messages[i], out HSteamNetConnection steamConnection, out Channel channel);
 
                         if (_connectionsBySteamConnection.TryGetValue(steamConnection, out Connection senderConnection))
+                        {
                             receivedPackets.Add(new(payload, channel, senderConnection));
-                        else
-                            TrackedArrayPool<byte>.Return(payload.Array);
+
+                            continue;
+                        }
+
+                        TrackedArrayPool<byte>.Return(payload.Array);
+
+                        /* Every connection is registered before it joins the poll group, so a message from one this server does not know is
+                         * its own bookkeeping having gone wrong, never a peer misbehaving. Said once per Steam connection, as the rest of its
+                         * messages would say it again. */
+                        if (_unknownSteamConnections.Add(steamConnection))
+                            Logger<SteamNetworkingServerSocket>.LogError($"Steam connection [{steamConnection.m_HSteamNetConnection}] sent a message, but no client is registered under it, so the message was dropped. Every message from it will be dropped the same way.");
                     }
                 } while (messageCount == _messages.Length);
             }
@@ -646,6 +669,7 @@ namespace Nucleus.Integrations.Unity.Transports
 
             _connectionsBySteamConnection.Clear();
             _steamConnectionsByConnection.Clear();
+            _unknownSteamConnections.Clear();
             _pendingClientEvents.Clear();
 
             base.OnReturn();
