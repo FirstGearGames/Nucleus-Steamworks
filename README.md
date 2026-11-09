@@ -11,7 +11,10 @@
 
 ## Install
 
-Place this folder in your project, for example at `Assets/Nucleus/Integrations/Steamworks`.
+This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either:
+
+- In the Package Manager, choose **Install package from disk** and pick this folder's `package.json`, or add `"com.firstgeargames.nucleus.steamworks": "file:<path to this folder>"` to `Packages/manifest.json`. Edits made in Unity are saved straight back to this folder.
+- Or copy the folder into your project's `Packages` or `Assets` folder.
 
 ## Quick start
 
