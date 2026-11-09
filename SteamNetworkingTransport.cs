@@ -1,0 +1,113 @@
+using Nucleus.Transports;
+
+namespace Nucleus.Integrations.Unity.Transports
+{
+    /// <summary>
+    /// A <see cref="Transport"/> over Steam Networking Sockets, which reaches peers by Steam identity through Valve's relay network so
+    /// nobody has to open a port or know an address.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Steam has to be initialised, and its callbacks run every frame, by whatever already does that in the game: Heathen's Foundation for
+    /// Steamworks, a <c>SteamManager</c>, or the game's own code calling <c>SteamAPI.RunCallbacks</c>. This transport never initialises
+    /// Steam itself, because a process holds one Steam session and the game owns it.
+    /// </para>
+    /// <para>
+    /// Every read from Steam happens inside <see cref="Transport.ReceivePackets"/>, which the network loop calls from Unity's
+    /// <c>Update</c>, so packets are polled on the main thread. Connection changes arrive through Steam's callback pump, which also runs on
+    /// the main thread, and are only queued there; the engine hears of them from the same receive pass.
+    /// </para>
+    /// <para>
+    /// A host's own client is paired with its server inside the process and never touches Steam: each packet passes between the two
+    /// sockets as one pooled copy, and the server's roster entry for that client is the client socket's own Connection. The client does
+    /// this on its own when its server is running and the client's target, <see cref="RemoteSteamId"/> or <see cref="RemoteAddress"/>,
+    /// is left empty or names this peer.
+    /// </para>
+    /// </remarks>
+    public class SteamNetworkingTransport : SocketPairTransport<SteamNetworkingServerSocket, SteamNetworkingClientSocket>
+    {
+        /// <summary>
+        /// How peers find each other: by Steam ID through Valve's relay network, or by IP address and port.
+        /// </summary>
+        /// <remarks>
+        /// Read when the server starts and when the client connects. Under <see cref="SteamAddressing.IpAddress"/> the server listens on
+        /// <see cref="Transport.Configuration"/>'s bind address and port.
+        /// </remarks>
+        public SteamAddressing Addressing { get; set; }
+
+        /// <summary>
+        /// The Steam ID of the peer a client connects to under <see cref="SteamAddressing.SteamId"/>: a player's own ID when that player
+        /// hosts, or a game server's ID.
+        /// </summary>
+        /// <remarks>Read when the client connects. Zero, or this peer's own ID, connects a host's client to its own server.</remarks>
+        public ulong RemoteSteamId { get; set; }
+
+        /// <summary>
+        /// The IP address a client connects to under <see cref="SteamAddressing.IpAddress"/>, with an optional port such as
+        /// <c>203.0.113.7:7777</c>.
+        /// </summary>
+        /// <remarks>
+        /// Read when the client connects. Without a port the configured port is used. Empty, <c>localhost</c> or a loopback address on that
+        /// port connects a host's client to its own server. Host names are not looked up.
+        /// </remarks>
+        public string RemoteAddress { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Whether the server side uses Steam's game server interface rather than the signed-in player's.
+        /// </summary>
+        /// <remarks>
+        /// Set it for a dedicated server that signs in as a Steam game server. A player hosting from the game leaves it off. Read when the
+        /// server starts. A client always connects through the player's interface.
+        /// </remarks>
+        public bool IsGameServer { get; set; }
+
+        /// <summary>
+        /// The rate Steam sends at on every connection this transport opens, in kilobytes of 1,024 bytes a second, or zero to keep Steam's
+        /// own.
+        /// </summary>
+        /// <remarks>
+        /// Read when the server starts and when the client connects. Steam holds each connection to a fixed rate whatever the line beneath
+        /// it could carry, and its own is 256 KiB a second, slower than nearly any player's connection: a join wider than a few dozen
+        /// kilobytes a tick then queues behind it, and an object wider than that takes longer to arrive than a client waits for it.
+        /// </remarks>
+        public uint SendRateKilobytesPerSecond { get; set; } = DefaultSendRateKilobytesPerSecond;
+
+        /// <summary>
+        /// The longest a client waits for Steam to open its link before giving up, in milliseconds, or zero to wait on Steam's own
+        /// timeout.
+        /// </summary>
+        /// <remarks>Read when the client connects. Has no effect on a host's own client, which pairs inside the process at once.</remarks>
+        public uint ConnectTimeoutMilliseconds { get; set; }
+
+        /// <summary>
+        /// The default for <see cref="SendRateKilobytesPerSecond"/>, four mebibytes a second, well inside an ordinary home or mobile line.
+        /// </summary>
+        public const uint DefaultSendRateKilobytesPerSecond = 4_096;
+
+        /// <summary>
+        /// Whether the client's last connect was closed by the far end before it opened, which is a peer saying it is not there or will
+        /// not have this one, as opposed to a peer that never answered.
+        /// </summary>
+        internal bool IsLastConnectRefused => ClientSocket is not null && ClientSocket.IsLastConnectRefused;
+
+        /// <inheritdoc/>
+        /// <remarks>Steam traffic is always a real network path, even between two clients on one machine, so the security checks stay on.</remarks>
+        public override bool IsLocalTransport() => false;
+
+        /// <inheritdoc/>
+        /// <remarks>Takes effect for connections accepted after the call, including on a server that is already running.</remarks>
+        public override void SetMaximumConnections(uint maximumConnections) => ServerConfiguration.MaximumConnections = maximumConnections;
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Used only under <see cref="SteamAddressing.IpAddress"/>, and read when the server starts. Empty listens on every interface; a
+        /// value that is not an IP address fails the server start rather than this call.
+        /// </remarks>
+        public override bool SetBindAddress(string bindAddress)
+        {
+            Configuration.BindAddress = bindAddress;
+
+            return true;
+        }
+    }
+}

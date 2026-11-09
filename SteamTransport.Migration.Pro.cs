@@ -1,0 +1,142 @@
+using System.Net;
+using System.Threading.Tasks;
+using Nucleus.Integrations.Newfarm;
+using Nucleus.Managers.Client;
+using Nucleus.Managers.Core;
+using UnityEngine;
+
+namespace Nucleus.Integrations.Unity.Transports
+{
+    public partial class SteamTransport
+    {
+        /// <summary>
+        /// Whether the session registers with a directory so it survives losing whoever is hosting it.
+        /// </summary>
+        /// <remarks>
+        /// Read when the transport is added. With it set, nobody passes a Steam ID or an address around: the host opens a session with
+        /// <see cref="StartHostingSessionAsync"/>, and a peer joins with <see cref="JoinSessionAsync"/> and the <see cref="SessionId"/>
+        /// the host handed out, which keeps working after a handover when the old host's Steam ID or address no longer does.
+        /// </remarks>
+        public bool IsHostMigrationEnabled { get => _isHostMigrationEnabled; set => _isHostMigrationEnabled = value; }
+
+        /// <summary>
+        /// Keeps the session alive across the loss of its host, or <see langword="null"/> when <see cref="IsHostMigrationEnabled"/> is off
+        /// or the transport has not been added yet.
+        /// </summary>
+        /// <remarks>
+        /// Polled from this component's <c>Update</c>, so a game needs only to start hosting or to join through it. Nothing about it is
+        /// Steam: it drives a directory, and reaches Steam through a <see cref="SteamSessionHost"/>.
+        /// </remarks>
+        public NewfarmHostMigration Migration { get; private set; }
+
+        /// <summary>
+        /// Names the session with the directory, which is what a host hands to its clients and the only thing a peer needs to find its way
+        /// back after a handover.
+        /// </summary>
+        public ulong SessionId => Migration is null ? NewfarmHostMigration.UnsetSessionId : Migration.SessionId;
+
+        /// <summary>
+        /// Whether the session registers with a directory so it survives losing whoever is hosting it.
+        /// </summary>
+        [SerializeField]
+        [Tooltip("Register the session with a newfarm directory so it survives losing its host.")]
+        private bool _isHostMigrationEnabled;
+        /// <summary>
+        /// The address of the directory the session registers with.
+        /// </summary>
+        [SerializeField]
+        [Tooltip("Address of the newfarm directory the session registers with.")]
+        private string _directoryAddress = "127.0.0.1";
+        /// <summary>
+        /// The port the directory listens on.
+        /// </summary>
+        [SerializeField]
+        [Tooltip("Port the newfarm directory listens on.")]
+        private ushort _directoryPort = 47778;
+        /// <summary>
+        /// The address other peers reach this peer at when it hosts by IP address.
+        /// </summary>
+        [SerializeField]
+        [Tooltip("Address other peers reach this peer at when it hosts by IP address, such as a public address with a forwarded port. Leave empty to use the bind address, or this machine's own IPv4 address, which only reaches the same network.")]
+        private string _hostedAddress = string.Empty;
+
+        /// <summary>
+        /// Opens a session, hosts it, and registers where it can be reached.
+        /// </summary>
+        /// <returns><see langword="true"/> when this peer is hosting the session.</returns>
+        /// <remarks>Requires <see cref="IsHostMigrationEnabled"/>; without a directory there is no session to open.</remarks>
+        public async Task<bool> StartHostingSessionAsync()
+        {
+            if (Migration is null)
+            {
+                Debug.LogError($"[{nameof(SteamTransport)}] Host migration is off, so there is no session to host. Start the server through the CoreManager instead.");
+
+                return false;
+            }
+
+            return await Migration.StartHostingAsync();
+        }
+
+        /// <summary>
+        /// Finds a session by its identifier and joins whoever currently hosts it.
+        /// </summary>
+        /// <param name="sessionId">The session, as the host distributed it.</param>
+        /// <returns><see langword="true"/> when this peer is in the session.</returns>
+        public async Task<bool> JoinSessionAsync(ulong sessionId)
+        {
+            if (Migration is null)
+            {
+                Debug.LogError($"[{nameof(SteamTransport)}] Host migration is off, so a session cannot be joined. Set a Steam ID or address and connect a client instead.");
+
+                return false;
+            }
+
+            return await Migration.JoinAsync(sessionId);
+        }
+
+        /// <summary>
+        /// Gives the session up to whoever the directory elects next, without leaving it and without stopping play.
+        /// </summary>
+        /// <returns><see langword="true"/> when this peer was hosting and has now given the session up.</returns>
+        public bool TrySurrenderHostingSession()
+        {
+            if (Migration is not null)
+                return Migration.TrySurrenderHosting();
+
+            Debug.LogError($"[{nameof(SteamTransport)}] Host migration is off, so there is no session to hand on. Stop the server through the CoreManager instead.");
+
+            return false;
+        }
+
+        partial void EnableHostMigration(CoreManager coreManager)
+        {
+            if (!_isHostMigrationEnabled)
+                return;
+
+            /* The world is cleared or kept at the moment the link drops, so a peer that means to carry it across a handover has to say so
+             * before then. */
+            coreManager.ClientManager.DisconnectResetMode = DisconnectResetMode.RetainReceivedWorld;
+
+            SteamSessionHost steamSessionHost = new(_steamNetworkingTransport) { HostedAddress = _hostedAddress };
+
+            Migration = new(coreManager, steamSessionHost, new IPEndPoint(IPAddress.Parse(_directoryAddress), _directoryPort));
+        }
+
+        /// <summary>
+        /// Drives the directory, which is what notices a lost host and acts on what the directory says to do about it.
+        /// </summary>
+        private void Update()
+        {
+            Migration?.Poll();
+        }
+
+        /// <summary>
+        /// Releases the directory link with this component.
+        /// </summary>
+        private void OnDestroy()
+        {
+            Migration?.Dispose();
+            Migration = null;
+        }
+    }
+}

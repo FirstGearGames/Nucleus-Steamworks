@@ -1,0 +1,33 @@
+{
+    "name": "Nucleus.Integrations.Unity.Steamworks.Tests",
+    "rootNamespace": "Nucleus.Integrations.Unity.Tests",
+    "references": [
+        "Nucleus.Integrations.Unity.Steamworks",
+        "Nucleus.Integrations.Unity",
+        "com.rlabrecque.steamworks.net",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll",
+        "Nucleus.dll",
+        "CodeBoost.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS",
+        "NUCLEUS_STEAMWORKS"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.rlabrecque.steamworks.net",
+            "expression": "",
+            "define": "NUCLEUS_STEAMWORKS"
+        }
+    ],
+    "noEngineReferences": false
+}
