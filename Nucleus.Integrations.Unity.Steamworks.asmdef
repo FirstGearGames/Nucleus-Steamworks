@@ -3,9 +3,7 @@
     "rootNamespace": "Nucleus.Integrations.Unity.Transports",
     "references": [
         "com.rlabrecque.steamworks.net",
-        "Nucleus.Integrations.Unity",
-        "Nucleus.Integrations.Newfarm",
-        "Newfarm.Client"
+        "Nucleus.Integrations.Unity"
     ],
     "includePlatforms": [
         "Editor",
@@ -19,7 +17,8 @@
     "overrideReferences": true,
     "precompiledReferences": [
         "Nucleus.dll",
-        "CodeBoost.dll"
+        "CodeBoost.dll",
+        "Newfarm.Client.dll"
     ],
     "autoReferenced": true,
     "defineConstraints": [

@@ -4,7 +4,7 @@
 
 ## Requirements
 
-- Unity 6.5 or newer, with Nucleus already in the project.
+- Unity 6.5 or newer, with Nucleus already in the project. This assembly references `Nucleus.dll`, `CodeBoost.dll` and `Newfarm.Client.dll`, which Nucleus installs in `Assets/Nucleus`.
 - [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) installed as a package (`com.rlabrecque.steamworks.net`). Installing it defines `NUCLEUS_STEAMWORKS`, which is what makes these assemblies compile. If Steamworks.NET came into the project another way, add `NUCLEUS_STEAMWORKS` to the Scripting Define Symbols yourself.
 - Something in your game that initialises Steam and runs its callbacks every frame, such as Heathen's Foundation for Steamworks, a `SteamManager`, or your own call to `SteamAPI.RunCallbacks`. The transport never initialises Steam itself, because a process holds one Steam session and your game owns it.
 - A desktop platform: Windows, macOS or Linux, plus the Editor.
@@ -40,7 +40,7 @@ Place this folder in your project, for example at `Assets/Nucleus/Integrations/S
 
 With host migration on, a session outlives whoever is hosting it. When the host leaves or crashes, one of the remaining players takes over, the others reconnect to them, and play carries on with the world they already had. Players never pass a Steam ID or an address around: they find each other through a session id.
 
-It needs a running [Newfarm](https://github.com/FirstGearGames/Newfarm) session directory, which every player can reach.
+It needs Nucleus Pro and a running [Newfarm](https://github.com/FirstGearGames/Newfarm) session directory, which every player can reach. The code compiles with Nucleus Free too, but there every session call logs an error and returns `false`.
 
 1. On the **Steam Transport**, turn on **Is Host Migration Enabled** (under **Host Migration**) and set the **Directory Address** and **Directory Port** (default `127.0.0.1:47778`).
 2. The host calls `await steamTransport.StartHostingSessionAsync()` and hands out `steamTransport.SessionId`.

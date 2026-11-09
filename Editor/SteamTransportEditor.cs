@@ -49,25 +49,21 @@ namespace Nucleus.Integrations.Unity.Editor
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_maximumTransmissionUnit"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_sendRateKilobytesPerSecond"));
 
-            // Host migration is Pro, so a Free build has none of these fields to draw.
             SerializedProperty hostMigrationProperty = serializedObject.FindProperty("_isHostMigrationEnabled");
 
-            if (hostMigrationProperty is not null)
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Host Migration", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(hostMigrationProperty);
+
+            if (hostMigrationProperty.hasMultipleDifferentValues || hostMigrationProperty.boolValue)
             {
-                EditorGUILayout.Space();
-                EditorGUILayout.LabelField("Host Migration", EditorStyles.boldLabel);
-                EditorGUILayout.PropertyField(hostMigrationProperty);
-
-                if (hostMigrationProperty.hasMultipleDifferentValues || hostMigrationProperty.boolValue)
+                using (new EditorGUI.IndentLevelScope())
                 {
-                    using (new EditorGUI.IndentLevelScope())
-                    {
-                        EditorGUILayout.PropertyField(serializedObject.FindProperty("_directoryAddress"));
-                        EditorGUILayout.PropertyField(serializedObject.FindProperty("_directoryPort"));
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("_directoryAddress"));
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("_directoryPort"));
 
-                        if (isIpAddressShown)
-                            EditorGUILayout.PropertyField(serializedObject.FindProperty("_hostedAddress"));
-                    }
+                    if (isIpAddressShown)
+                        EditorGUILayout.PropertyField(serializedObject.FindProperty("_hostedAddress"));
                 }
             }
 

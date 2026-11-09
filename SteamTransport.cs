@@ -138,12 +138,5 @@ namespace Nucleus.Integrations.Unity.Transports
 
             return _steamNetworkingTransport;
         }
-
-        /// <summary>
-        /// Hook invoked once the transport is added. The Pro implementation stands up host migration when the inspector asked for it;
-        /// with that implementation absent there is no migration and nothing happens.
-        /// </summary>
-        /// <param name="coreManager">The CoreManager the transport belongs to.</param>
-        partial void EnableHostMigration(CoreManager coreManager);
     }
 }
