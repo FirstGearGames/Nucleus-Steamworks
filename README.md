@@ -72,6 +72,12 @@ When players connect by IP, the host advertises **Hosted Address**. Leave it emp
 - **A client connects by IP to nothing.** Check that the address is an IP address rather than a host name, and that the server's port is open to it.
 - **Hosting a migratable session fails by IP with an address length error.** The address and port together must fit in 64 characters. Use an IPv4 address in **Hosted Address**.
 
+## Checking a link
+
+`Diagnostics/SteamLinkProbe` checks a Steam link both ways with nothing of your game in the way. Put it on the GameObject with the `UnityCoreManager`, `UnityTransportManager` and `SteamTransport`, set **Role** to **Host** on one machine and to **Client** with the host's Steam ID on the other, and enter play mode on both. The host logs its own Steam ID first.
+
+Each second the client sends a numbered probe to the server on both channels, and the server echoes each one back. The host logs how many probes arrived from each client and how many bytes arrived; the client logs how many echoes came back. Both log every send Steam refused, with Steam's reason. It starts Steam itself, so turn off **Is Steam Started Here** if your game already does.
+
 ## Tests
 
 The play tests in `Tests` run over a real Steam connection. They need the Steam client running and signed in, and a `steam_appid.txt` holding an app id (480, Spacewar, for testing) in the project folder. They are skipped when Steam cannot be initialised.

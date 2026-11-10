@@ -1,0 +1,35 @@
+{
+    "name": "Nucleus.Integrations.Unity.Steamworks.Diagnostics",
+    "rootNamespace": "Nucleus.Integrations.Unity.Transports",
+    "references": [
+        "Nucleus.Integrations.Unity.Steamworks",
+        "Nucleus.Integrations.Unity",
+        "com.rlabrecque.steamworks.net"
+    ],
+    "includePlatforms": [
+        "Editor",
+        "LinuxStandalone64",
+        "macOSStandalone",
+        "WindowsStandalone32",
+        "WindowsStandalone64"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "Nucleus.dll",
+        "CodeBoost.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "NUCLEUS_STEAMWORKS"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.rlabrecque.steamworks.net",
+            "expression": "",
+            "define": "NUCLEUS_STEAMWORKS"
+        }
+    ],
+    "noEngineReferences": false
+}
