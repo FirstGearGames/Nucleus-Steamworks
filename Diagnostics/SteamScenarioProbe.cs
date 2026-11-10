@@ -46,10 +46,11 @@ namespace Nucleus.Integrations.Unity.Transports
         [Tooltip("Seconds between remote calls and between log lines.")]
         private float _intervalSeconds = 1f;
         /// <summary>
-        /// How far from the scene origin a client walks its player object.
+        /// How far from the scene origin this machine walks the player object its own client controls.
         /// </summary>
+        /// <remarks>The host walks twice as far out, so the two player objects never meet.</remarks>
         [SerializeField]
-        [Tooltip("Client only: radius of the circle the client walks its player object around, in metres.")]
+        [Tooltip("Radius of the circle this machine walks its own player object around, in metres. The host walks twice as far out.")]
         private float _circleRadius = 4f;
 
         /// <summary>
@@ -131,8 +132,7 @@ namespace Nucleus.Integrations.Unity.Transports
 
             SteamAPI.RunCallbacks();
 
-            if (_role is SteamLinkProbeRole.Client)
-                WalkControlledPlayerObject();
+            WalkControlledPlayerObject();
 
             if (Time.unscaledTime < _nextIntervalTime)
                 return;
@@ -160,7 +160,8 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
-        /// Moves the player object this client controls around a circle, as a player holding a key would.
+        /// Moves the player object this machine's own client controls around a circle, as a player holding a key would. On the host that
+        /// is the host's own player, so both sides of the link are seen moving.
         /// </summary>
         private void WalkControlledPlayerObject()
         {
@@ -171,7 +172,9 @@ namespace Nucleus.Integrations.Unity.Transports
 
             Transform playerTransform = nucleusBehaviour.transform;
 
-            playerTransform.position = new(Mathf.Cos(_circleAngle) * _circleRadius, playerTransform.position.y, Mathf.Sin(_circleAngle) * _circleRadius);
+            float circleRadius = _role is SteamLinkProbeRole.Host ? _circleRadius * 2f : _circleRadius;
+
+            playerTransform.position = new(Mathf.Cos(_circleAngle) * circleRadius, playerTransform.position.y, Mathf.Sin(_circleAngle) * circleRadius);
         }
 
         /// <summary>
