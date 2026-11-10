@@ -145,6 +145,8 @@ namespace Nucleus.Integrations.Unity.Transports
             }
 
             _steamNetworkingTransport.SendFailed += SteamNetworkingTransport_OnSendFailed;
+            _unityCoreManager.CoreManager.TransportManager.ConnectionLocalStateChanged += TransportManager_OnConnectionLocalStateChanged;
+            _unityCoreManager.CoreManager.ClientManager.LocalClientAuthenticated += ClientManager_OnLocalClientAuthenticated;
             _unityCoreManager.CoreManager.MessageManager.RegisterMessageHandler<SteamLinkProbeMessage>(OnProbeReceived);
 
             if (_role is SteamLinkProbeRole.Host)
@@ -198,7 +200,11 @@ namespace Nucleus.Integrations.Unity.Transports
                 _steamNetworkingTransport.SendFailed -= SteamNetworkingTransport_OnSendFailed;
 
             if (_unityCoreManager != null && _unityCoreManager.CoreManager is not null)
+            {
+                _unityCoreManager.CoreManager.TransportManager.ConnectionLocalStateChanged -= TransportManager_OnConnectionLocalStateChanged;
+                _unityCoreManager.CoreManager.ClientManager.LocalClientAuthenticated -= ClientManager_OnLocalClientAuthenticated;
                 _unityCoreManager.CoreManager.MessageManager.UnregisterMessageHandler<SteamLinkProbeMessage>(OnProbeReceived);
+            }
 
             if (_isSteamStarted)
                 SteamAPI.Shutdown();
@@ -271,6 +277,26 @@ namespace Nucleus.Integrations.Unity.Transports
 
             senderConnection.SendMessage(messageContext.Channel, steamLinkProbeMessage);
         }
+
+        /// <summary>
+        /// Logs this machine's own link coming up or going down, on either side, as it happens.
+        /// </summary>
+        /// <param name="connectionStateChange">The change.</param>
+        private void TransportManager_OnConnectionLocalStateChanged(ConnectionStateChange connectionStateChange)
+        {
+            LocalConnectionState localConnectionState = connectionStateChange.Connection.LocalState;
+
+            if (localConnectionState is LocalConnectionState.Connected)
+                Debug.Log($"[SteamLinkProbe] The [{connectionStateChange.Invoker}] side is connected.");
+            else if (localConnectionState is LocalConnectionState.Disconnected)
+                Debug.LogWarning($"[SteamLinkProbe] The [{connectionStateChange.Invoker}] side lost its link.");
+        }
+
+        /// <summary>
+        /// Logs this machine's client being admitted by the server, which is when probes start.
+        /// </summary>
+        /// <param name="localClientConnection">This machine's client.</param>
+        private void ClientManager_OnLocalClientAuthenticated(Connection localClientConnection) => Debug.Log($"[SteamLinkProbe] Authenticated with the server as client [{localClientConnection.Id}].");
 
         /// <summary>
         /// Logs a send Steam refused, with its reason.
