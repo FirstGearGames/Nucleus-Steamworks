@@ -25,6 +25,7 @@ namespace Nucleus.Integrations.Unity.Transports
     /// client's own log says whether it is the controller and whether each call was accepted for sending.
     /// </remarks>
     [DisallowMultipleComponent]
+    [NucleusHelpUrl(typeof(SteamScenarioProbe))]
     public class SteamScenarioProbe : MonoBehaviour
     {
         /// <summary>

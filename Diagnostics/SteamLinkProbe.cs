@@ -23,6 +23,7 @@ namespace Nucleus.Integrations.Unity.Transports
     /// Starts Steam itself unless told something else in the game does.
     /// </remarks>
     [DisallowMultipleComponent]
+    [NucleusHelpUrl(typeof(SteamLinkProbe))]
     public class SteamLinkProbe : MonoBehaviour
     {
         /// <summary>

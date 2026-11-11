@@ -19,6 +19,7 @@ namespace Nucleus.Integrations.Unity.Transports
     /// a host's own client needs nothing at all.
     /// </remarks>
     [DisallowMultipleComponent]
+    [NucleusHelpUrl(typeof(SteamTransport))]
     public partial class SteamTransport : NetworkTransport
     {
         /// <summary>
