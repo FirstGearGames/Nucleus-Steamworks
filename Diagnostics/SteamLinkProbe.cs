@@ -246,7 +246,7 @@ namespace Nucleus.Integrations.Unity.Transports
             Nucleus.Managers.Transports.TransportManager transportManager = _unityCoreManager.CoreManager.TransportManager;
             bool isAuthenticated = transportManager.TryGetLocalClientConnection(out Connection localClientConnection) && localClientConnection.IsAuthenticated;
 
-            if (isAuthenticated && transportManager.TryGetServerConnection(out Connection serverConnection))
+            if (isAuthenticated && localClientConnection.EnsureGetServerConnection(out Connection serverConnection))
             {
                 serverConnection.SendMessage(Channel.Reliable, new SteamLinkProbeMessage { Sequence = ++_sentProbeCount, IsReliable = true });
                 serverConnection.SendMessage(Channel.Unreliable, new SteamLinkProbeMessage { Sequence = ++_sentProbeCount, IsReliable = false });
