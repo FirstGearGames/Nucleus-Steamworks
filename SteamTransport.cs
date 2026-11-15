@@ -135,7 +135,7 @@ namespace Nucleus.Integrations.Unity.Transports
             _steamNetworkingTransport.Configuration.MaximumTransmissionUnit = _maximumTransmissionUnit;
             _steamNetworkingTransport.SendRateKilobytesPerSecond = _sendRateKilobytesPerSecond;
 
-            EnableHostMigration(coreManager);
+            await EnableHostMigrationAsync(coreManager);
 
             return _steamNetworkingTransport;
         }

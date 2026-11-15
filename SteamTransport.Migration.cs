@@ -1,4 +1,6 @@
+using System;
 using System.Net;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using Nucleus.Integrations.Newfarm;
 using Nucleus.Managers.Client;
@@ -47,10 +49,10 @@ namespace Nucleus.Integrations.Unity.Transports
         [Tooltip("Register the session with a newfarm directory so it survives losing its host.")]
         private bool _isHostMigrationEnabled;
         /// <summary>
-        /// The address of the directory the session registers with.
+        /// The IP address or host name of the directory the session registers with.
         /// </summary>
         [SerializeField]
-        [Tooltip("Address of the newfarm directory the session registers with.")]
+        [Tooltip("IP address or host name of the newfarm directory the session registers with. A host name is looked up through DNS when the transport is added.")]
         private string _directoryAddress = "127.0.0.1";
         /// <summary>
         /// The port the directory listens on.
@@ -117,9 +119,15 @@ namespace Nucleus.Integrations.Unity.Transports
         /// Stands up host migration when the inspector asked for it, once the transport is added.
         /// </summary>
         /// <param name="coreManager">The CoreManager the transport belongs to.</param>
-        private void EnableHostMigration(CoreManager coreManager)
+        /// <remarks>Awaited by the add, which every start awaits, so a server cannot start before its session is ready to open.</remarks>
+        private async Task EnableHostMigrationAsync(CoreManager coreManager)
         {
             if (!_isHostMigrationEnabled)
+                return;
+
+            IPAddress directoryIpAddress = await ResolveDirectoryAddressAsync();
+
+            if (directoryIpAddress is null)
                 return;
 
             /* The world is cleared or kept at the moment the link drops, so a peer that means to carry it across a handover has to say so
@@ -128,7 +136,34 @@ namespace Nucleus.Integrations.Unity.Transports
 
             SteamSessionHost steamSessionHost = new(_steamNetworkingTransport) { HostedAddress = _hostedAddress };
 
-            Migration = new(coreManager, steamSessionHost, new IPEndPoint(IPAddress.Parse(_directoryAddress), _directoryPort));
+            Migration = new(coreManager, steamSessionHost, new IPEndPoint(directoryIpAddress, _directoryPort));
+        }
+
+        /// <summary>
+        /// Reads the directory address as an IP address, or looks it up through DNS when it is a host name.
+        /// </summary>
+        /// <returns>The directory's IP address, or <see langword="null"/> when the lookup failed, which leaves host migration off.</returns>
+        /// <remarks>The first address the lookup returns is used. The directory listens on both IPv4 and IPv6, so either family reaches it.</remarks>
+        private async Task<IPAddress> ResolveDirectoryAddressAsync()
+        {
+            if (IPAddress.TryParse(_directoryAddress, out IPAddress directoryIpAddress))
+                return directoryIpAddress;
+
+            try
+            {
+                IPAddress[] directoryIpAddresses = await Dns.GetHostAddressesAsync(_directoryAddress);
+
+                if (directoryIpAddresses.Length > 0)
+                    return directoryIpAddresses[0];
+
+                Debug.LogError($"[{nameof(SteamTransport)}] Host migration is off: the DNS lookup for directory [{_directoryAddress}] returned no addresses.");
+            }
+            catch (Exception exception) when (exception is SocketException or ArgumentException)
+            {
+                Debug.LogError($"[{nameof(SteamTransport)}] Host migration is off: directory [{_directoryAddress}] is not an IP address and its DNS lookup failed: {exception.Message}");
+            }
+
+            return null;
         }
 
         /// <summary>

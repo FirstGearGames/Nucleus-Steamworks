@@ -46,7 +46,7 @@ With host migration on, a session outlives whoever is hosting it. When the host 
 
 It needs Nucleus Pro and a running [Newfarm](https://github.com/FirstGearGames/Newfarm) session directory, which every player can reach. The code compiles with Nucleus Free too, but there no session is opened.
 
-1. On the **Steam Transport**, turn on **Is Host Migration Enabled** (under **Host Migration**) and set the **Directory Address** and **Directory Port** (default `127.0.0.1:47778`).
+1. On the **Steam Transport**, turn on **Is Host Migration Enabled** (under **Host Migration**) and set the **Directory Address**, an IP address or a host name, and the **Directory Port** (default `127.0.0.1:47778`). A host name is looked up through DNS when the transport is added.
 2. Start and join exactly as you would without it, as in the quick start above.
 
 That is all. Once the server is running it opens a session with the directory, and every player that joins is told which session it is in, so nobody hands out anything new.
