@@ -123,6 +123,13 @@ namespace Nucleus.Integrations.Unity.Transports
              * stand-in is kept only by a host, whose server socket is live and whose Connection describes the server it is running. */
             RecycleConnection();
 
+            if (SteamSockets.IsShutDown(isGameServer: false))
+            {
+                Logger<SteamNetworkingClientSocket>.LogError("Steam is not initialised, so the client cannot start. Make sure Steam is initialised before the client starts.");
+
+                return Fail();
+            }
+
             bool isHosting = serverSocket.State is LocalConnectionState.Connected;
 
             serverSocket.RecycleStandInUnlessHosting();
@@ -167,13 +174,23 @@ namespace Nucleus.Integrations.Unity.Transports
 
             long deadlineTimestamp = connectTimeoutMilliseconds == 0 ? long.MaxValue : Stopwatch.GetTimestamp() + connectTimeoutMilliseconds * Stopwatch.Frequency / 1000;
 
-            // Read again after every wait: Steam's callback pump, which sets these, runs on this thread between them.
+            /* Read again after every wait: Steam's callback pump, which sets these, runs on this thread between them. A Steam shut down
+             * meanwhile raises nothing more, so that ends the wait too. */
+            bool isShutDown = false;
+
             while (!_isSteamConnected && !_isSteamClosed && Stopwatch.GetTimestamp() < deadlineTimestamp)
+            {
+                isShutDown = SteamSockets.IsShutDown(isGameServer: false);
+
+                if (isShutDown)
+                    break;
+
                 await Task.Delay(ConnectPollIntervalMilliseconds);
+            }
 
             if (!_isSteamConnected)
             {
-                Logger<SteamNetworkingClientSocket>.LogError($"Could not connect to [{(isIpAddressing ? remoteAddress : remoteSteamId.ToString())}].");
+                Logger<SteamNetworkingClientSocket>.LogError($"Could not connect to [{(isIpAddressing ? remoteAddress : remoteSteamId.ToString())}]{(isShutDown ? ": Steam was shut down" : string.Empty)}.");
 
                 return Fail();
             }
@@ -274,7 +291,7 @@ namespace Nucleus.Integrations.Unity.Transports
                 return;
             }
 
-            if (State is not LocalConnectionState.Connected || _steamConnection == HSteamNetConnection.Invalid)
+            if (State is not LocalConnectionState.Connected || _steamConnection == HSteamNetConnection.Invalid || SteamSockets.IsShutDown(isGameServer: false))
             {
                 Nucleus.Managers.Transports.TransportManager.PacketFailed(outgoingPacket);
 
@@ -320,6 +337,16 @@ namespace Nucleus.Integrations.Unity.Transports
 
             if (_steamConnection == HSteamNetConnection.Invalid || _serverStandIn is null)
                 return;
+
+            // A Steam shut down under a live link took the link with it, and Steamworks.NET throws on any further call.
+            if (SteamSockets.IsShutDown(isGameServer: false))
+            {
+                Logger<SteamNetworkingClientSocket>.LogWarning("Steam was shut down while the client was connected, so the client stopped. Shut Steam down only after the transport stops.");
+
+                _ = DisconnectAsync();
+
+                return;
+            }
 
             int messageCount;
 
@@ -396,6 +423,7 @@ namespace Nucleus.Integrations.Unity.Transports
         /// <summary>
         /// Closes the connection and stops listening for Steam's callbacks.
         /// </summary>
+        /// <remarks>A Steam already shut down has closed the connection itself, so its handle is only forgotten then.</remarks>
         private void ReleaseSteam()
         {
             _connectionStatusChangedCallback?.Dispose();
@@ -403,7 +431,9 @@ namespace Nucleus.Integrations.Unity.Transports
 
             if (_steamConnection != HSteamNetConnection.Invalid)
             {
-                SteamSockets.CloseConnection(isGameServer: false, _steamConnection, isLingerEnabled: false);
+                if (!SteamSockets.IsShutDown(isGameServer: false))
+                    SteamSockets.CloseConnection(isGameServer: false, _steamConnection, isLingerEnabled: false);
+
                 _steamConnection = HSteamNetConnection.Invalid;
             }
 

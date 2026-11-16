@@ -14,6 +14,32 @@ namespace Nucleus.Integrations.Unity.Transports
     internal static class SteamSockets
     {
         /// <summary>
+        /// Returns whether the chosen interface is unavailable, never initialised or already shut down.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <returns>True when no call may be made on it, as Steamworks.NET throws on every one.</returns>
+        /// <remarks>
+        /// The game owns Steam, and Unity does not order one object's teardown against another's, so Steam can shut down while a socket is
+        /// still open. Its handles went with it, so a socket only forgets them then.
+        /// </remarks>
+        internal static bool IsShutDown(bool isGameServer)
+        {
+            try
+            {
+                if (isGameServer)
+                    InteropHelp.TestIfAvailableGameServer();
+                else
+                    InteropHelp.TestIfAvailableClient();
+
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return true;
+            }
+        }
+
+        /// <summary>
         /// Returns the Steam ID of whichever account the chosen interface signed in as.
         /// </summary>
         /// <param name="isGameServer">True for the game server interface.</param>

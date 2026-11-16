@@ -65,10 +65,11 @@ When players connect by IP, the host advertises **Hosted Address**. Leave it emp
 - **A host's own client never appears in Steam.** It is paired with the server inside the process, so its traffic never leaves the machine.
 - **A client that cannot reach its server waits for Steam to give up.** That is Steam's own connect timeout unless `SteamNetworkingTransport.ConnectTimeoutMilliseconds` sets a shorter one.
 - **The world stays put when the link drops** while host migration is on. That is deliberate: it is what the next host carries on from.
+- **"Steam was shut down while the server was running" or "while the client was connected".** Your game shut Steam down before stopping the transport. Steam closed every link as it went, so the transport stops and forgets them rather than throwing; stop the transport first to close them cleanly.
 
 ## Troubleshooting
 
-- **Nothing in this folder compiles, and there are no errors.** Steamworks.NET is not installed as a package, so `NUCLEUS_STEAMWORKS` is not defined. Install it, or add the define.
+- **Nothing in this folder compiles, and there are no errors.** Steamworks.NET is not installed as a package, so `NUCLEUS_STEAMWORKS` is not defined. Install it, or add the define. `DISABLESTEAMWORKS`, Steamworks.NET's own switch, compiles these out too.
 - **"Steam refused to open a listen socket" or "Steam refused to connect".** Steam is not initialised yet. Make sure whatever starts Steam runs before the server or client starts.
 - **A client connects by IP to nothing.** Check that the address is an IP address rather than a host name, and that the server's port is open to it.
 - **Hosting a migratable session fails by IP with an address length error.** The address and port together must fit in 64 characters. Use an IPv4 address in **Hosted Address**.
