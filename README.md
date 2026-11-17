@@ -86,6 +86,8 @@ Each second the client sends a numbered probe to the server on both channels, an
 
 From code, `SteamNetworkingTransport.TryGetLinkStatus(connection, out SteamLinkStatus linkStatus)` reads Steam's own view of a link: ping, quality each way, send and receive rates, Steam's send rate, and the reliable and unreliable bytes still queued. On a server pass a remote client's Connection; on a client pass its own or its server Connection. It returns false for a host's own client, which never crosses Steam. Each read allocates a little in Steamworks.NET, so read it a few times a second rather than every frame.
 
+`SetNetworkConditions` on the transport, or the network conditions on the `UnityTransportManager`, has Steam simulate latency, jitter, loss, reordering and duplication on its own sends. Steam keeps these for the whole process, so they apply to every Steam connection in it, and latency set where both peers share a process counts twice in the round trip. A host's own client never crosses Steam, so test from a remote client. A transport that was never given conditions leaves Steam's simulation settings as the game set them, and one that was clears them when it shuts down.
+
 ## Tests
 
 The play tests in `Tests` run over a real Steam connection. They need the Steam client running and signed in, and a `steam_appid.txt` holding an app id (480, Spacewar, for testing) in the project folder. They are skipped when Steam cannot be initialised.

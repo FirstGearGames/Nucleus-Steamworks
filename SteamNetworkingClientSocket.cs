@@ -174,6 +174,7 @@ namespace Nucleus.Integrations.Unity.Transports
             bool isShutDown = false;
 
             SteamSockets.InitRelayNetworkAccess(isGameServer: false);
+            steamNetworkingTransport.ApplyNetworkConditions();
 
             /* A dial made before Steam has its network config fails at once, as happens straight after Steam starts, so the dial waits for
              * it inside the connect's deadline. With no deadline it waits as long as Steam would let the link connect, then dials anyway and

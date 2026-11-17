@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using CodeBoost.Logging;
 using Nucleus.Transports;
 using Steamworks;
 
@@ -15,6 +17,11 @@ namespace Nucleus.Integrations.Unity.Transports
     /// </remarks>
     internal static class SteamSockets
     {
+        /// <summary>
+        /// How long Steam holds back a packet it reorders, in milliseconds.
+        /// </summary>
+        private const int ReorderDelayMilliseconds = 100;
+
         /// <summary>
         /// Returns whether the chosen interface is unavailable, never initialised or already shut down.
         /// </summary>
@@ -283,6 +290,44 @@ namespace Nucleus.Integrations.Unity.Transports
         internal static Callback<SteamNetConnectionStatusChangedCallback_t> CreateStatusCallback(bool isGameServer, Callback<SteamNetConnectionStatusChangedCallback_t>.DispatchDelegate handler) => isGameServer ? Callback<SteamNetConnectionStatusChangedCallback_t>.CreateGameServer(handler) : Callback<SteamNetConnectionStatusChangedCallback_t>.Create(handler);
 
         /// <summary>
+        /// Writes simulated network conditions into the chosen interface's process-wide fake lag, loss, reordering and duplication.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="networkConditions">The conditions; the default value simulates nothing.</param>
+        /// <returns>True when the interface was up and took them; false before Steam starts or once it has shut down.</returns>
+        /// <remarks>
+        /// Steam simulates on send only, so latency set on both peers adds to the round trip twice. Jitter follows Steam's own spread,
+        /// averaging half of <see cref="NetworkConditions.JitterMilliseconds"/> and never above it, and a reordered packet is held back
+        /// <see cref="ReorderDelayMilliseconds"/>. <see cref="NetworkConditions.Seed"/> is ignored, since Steam draws its own choices.
+        /// </remarks>
+        internal static bool TryApplyNetworkConditions(bool isGameServer, NetworkConditions networkConditions)
+        {
+            if (IsShutDown(isGameServer))
+                return false;
+
+            float jitterMilliseconds = networkConditions.JitterMilliseconds;
+            IntPtr valuePointer = Marshal.AllocHGlobal(sizeof(int));
+
+            try
+            {
+                SetGlobalInt32(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketLag_Send, (int)Math.Min(networkConditions.LatencyMilliseconds, int.MaxValue));
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketJitter_Send_Avg, jitterMilliseconds / 2f);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketJitter_Send_Max, jitterMilliseconds);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketJitter_Send_Pct, jitterMilliseconds > 0f ? 100f : 0f);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketLoss_Send, networkConditions.PacketLossChance * 100f);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketReorder_Send, networkConditions.OutOfOrderChance * 100f);
+                SetGlobalInt32(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketReorder_Time, ReorderDelayMilliseconds);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketDup_Send, networkConditions.DuplicateChance * 100f);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(valuePointer);
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Returns how many settings a list holds, zero for none.
         /// </summary>
         private static int GetOptionCount(SteamNetworkingConfigValue_t[] options) => options?.Length ?? 0;
@@ -300,6 +345,49 @@ namespace Nucleus.Integrations.Unity.Transports
             option.m_val.m_int32 = value;
 
             return option;
+        }
+
+        /// <summary>
+        /// Sets one process-wide whole-number setting on the chosen interface.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="valuePointer">Four bytes of native memory the value is written through.</param>
+        /// <param name="configValue">The setting.</param>
+        /// <param name="value">Its value.</param>
+        private static void SetGlobalInt32(bool isGameServer, IntPtr valuePointer, ESteamNetworkingConfigValue configValue, int value)
+        {
+            Marshal.WriteInt32(valuePointer, value);
+            SetGlobal(isGameServer, valuePointer, configValue, ESteamNetworkingConfigDataType.k_ESteamNetworkingConfig_Int32);
+        }
+
+        /// <summary>
+        /// Sets one process-wide decimal setting on the chosen interface.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="valuePointer">Four bytes of native memory the value is written through.</param>
+        /// <param name="configValue">The setting.</param>
+        /// <param name="value">Its value.</param>
+        private static void SetGlobalFloat(bool isGameServer, IntPtr valuePointer, ESteamNetworkingConfigValue configValue, float value)
+        {
+            Marshal.WriteInt32(valuePointer, BitConverter.SingleToInt32Bits(value));
+            SetGlobal(isGameServer, valuePointer, configValue, ESteamNetworkingConfigDataType.k_ESteamNetworkingConfig_Float);
+        }
+
+        /// <summary>
+        /// Hands Steam one process-wide setting already written to native memory.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="valuePointer">The native memory holding the value.</param>
+        /// <param name="configValue">The setting.</param>
+        /// <param name="dataType">The value's type.</param>
+        private static void SetGlobal(bool isGameServer, IntPtr valuePointer, ESteamNetworkingConfigValue configValue, ESteamNetworkingConfigDataType dataType)
+        {
+            bool isAccepted = isGameServer
+                ? SteamGameServerNetworkingUtils.SetConfigValue(configValue, ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Global, IntPtr.Zero, dataType, valuePointer)
+                : SteamNetworkingUtils.SetConfigValue(configValue, ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Global, IntPtr.Zero, dataType, valuePointer);
+
+            if (!isAccepted)
+                Logger<SteamNetworkingTransport>.LogWarning($"Steam refused the setting [{configValue}], so it is not simulated.");
         }
     }
 }
