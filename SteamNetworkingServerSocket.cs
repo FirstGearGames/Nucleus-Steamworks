@@ -125,6 +125,8 @@ namespace Nucleus.Integrations.Unity.Transports
             SteamNetworkingTransport steamNetworkingTransport = (SteamNetworkingTransport)Transport;
             IsGameServer = steamNetworkingTransport.IsGameServer;
 
+            SteamSockets.InitRelayNetworkAccess(IsGameServer);
+
             if (steamNetworkingTransport.Addressing is SteamAddressing.IpAddress)
             {
                 Configuration configuration = steamNetworkingTransport.Configuration;

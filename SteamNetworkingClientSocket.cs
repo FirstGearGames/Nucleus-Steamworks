@@ -84,6 +84,11 @@ namespace Nucleus.Integrations.Unity.Transports
         private const int ConnectPollIntervalMilliseconds = 5;
 
         /// <summary>
+        /// Steam's own connecting timeout, in seconds, which bounds the wait for its network config when nothing else does.
+        /// </summary>
+        private const uint SteamConnectingTimeoutSeconds = 10;
+
+        /// <summary>
         /// Creates a new instance.
         /// </summary>
         public SteamNetworkingClientSocket() { }
@@ -161,23 +166,48 @@ namespace Nucleus.Integrations.Unity.Transports
                 return ConnectionStateChangeResult.UnspecifiedError;
             }
 
+            string remoteTarget = isIpAddressing ? remoteAddress : remoteSteamId.ToString();
+            long nowTimestamp = Stopwatch.GetTimestamp();
+            long deadlineTimestamp = connectTimeoutMilliseconds == 0 ? long.MaxValue : nowTimestamp + connectTimeoutMilliseconds * Stopwatch.Frequency / 1000;
+            uint connectingTimeoutSeconds = steamNetworkingTransport.Configuration.ConnectingTimeoutSeconds;
+            long networkConfigDeadlineTimestamp = Math.Min(deadlineTimestamp, nowTimestamp + (connectingTimeoutSeconds > 0 ? connectingTimeoutSeconds : SteamConnectingTimeoutSeconds) * Stopwatch.Frequency);
+            bool isShutDown = false;
+
+            SteamSockets.InitRelayNetworkAccess(isGameServer: false);
+
+            /* A dial made before Steam has its network config fails at once, as happens straight after Steam starts, so the dial waits for
+             * it inside the connect's deadline. With no deadline it waits as long as Steam would let the link connect, then dials anyway and
+             * leaves the failure to Steam. Steam can shut down during a wait, after which no call may be made on it. */
+            while (!SteamSockets.IsNetworkConfigSettled() && Stopwatch.GetTimestamp() < networkConfigDeadlineTimestamp)
+            {
+                await Task.Delay(ConnectPollIntervalMilliseconds);
+
+                isShutDown = SteamSockets.IsShutDown(isGameServer: false);
+
+                if (isShutDown)
+                    break;
+            }
+
+            if (isShutDown || Stopwatch.GetTimestamp() >= deadlineTimestamp && !SteamSockets.IsNetworkConfigSettled())
+            {
+                Logger<SteamNetworkingClientSocket>.LogError($"Could not connect to [{remoteTarget}]: {(isShutDown ? "Steam was shut down" : "Steam's network config did not arrive in time")}.");
+
+                return Fail();
+            }
+
             _connectionStatusChangedCallback = SteamSockets.CreateStatusCallback(isGameServer: false, OnConnectionStatusChanged);
             SteamNetworkingConfigValue_t[] connectionOptions = SteamSockets.CreateConnectionOptions(steamNetworkingTransport);
             _steamConnection = isIpAddressing ? SteamSockets.ConnectByIPAddress(ref remoteIpAddress, connectionOptions) : SteamSockets.ConnectP2P(remoteSteamId, connectionOptions);
 
             if (_steamConnection == HSteamNetConnection.Invalid)
             {
-                Logger<SteamNetworkingClientSocket>.LogError($"Steam refused to connect to [{(isIpAddressing ? remoteAddress : remoteSteamId.ToString())}]. Make sure Steam is initialised before the client starts.");
+                Logger<SteamNetworkingClientSocket>.LogError($"Steam refused to connect to [{remoteTarget}]. Make sure Steam is initialised before the client starts.");
 
                 return Fail();
             }
 
-            long deadlineTimestamp = connectTimeoutMilliseconds == 0 ? long.MaxValue : Stopwatch.GetTimestamp() + connectTimeoutMilliseconds * Stopwatch.Frequency / 1000;
-
             /* Read again after every wait: Steam's callback pump, which sets these, runs on this thread between them. A Steam shut down
              * meanwhile raises nothing more, so that ends the wait too. */
-            bool isShutDown = false;
-
             while (!_isSteamConnected && !_isSteamClosed && Stopwatch.GetTimestamp() < deadlineTimestamp)
             {
                 isShutDown = SteamSockets.IsShutDown(isGameServer: false);
@@ -190,7 +220,7 @@ namespace Nucleus.Integrations.Unity.Transports
 
             if (!_isSteamConnected)
             {
-                Logger<SteamNetworkingClientSocket>.LogError($"Could not connect to [{(isIpAddressing ? remoteAddress : remoteSteamId.ToString())}]{(isShutDown ? ": Steam was shut down" : string.Empty)}.");
+                Logger<SteamNetworkingClientSocket>.LogError($"Could not connect to [{remoteTarget}]{(isShutDown ? ": Steam was shut down" : string.Empty)}.");
 
                 return Fail();
             }

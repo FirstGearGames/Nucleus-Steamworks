@@ -74,6 +74,7 @@ When players connect by IP, the host advertises **Hosted Address**. Leave it emp
 
 - **Nothing in this folder compiles, and there are no errors.** Steamworks.NET is not installed as a package, so `NUCLEUS_STEAMWORKS` is not defined. Install it, or add the define. `DISABLESTEAMWORKS`, Steamworks.NET's own switch, compiles these out too.
 - **"Steam refused to open a listen socket" or "Steam refused to connect".** Steam is not initialised yet. Make sure whatever starts Steam runs before the server or client starts.
+- **"Could not connect: Steam's network config did not arrive in time".** A client waits for Steam to fetch its network config before it dials, since a dial made before it arrives fails at once, and `ConnectTimeoutMilliseconds` ran out first. Check that Steam is online, or give it longer. With no `ConnectTimeoutMilliseconds` the wait lasts at most **Connecting Timeout Seconds**, then the client dials anyway.
 - **A client connects by IP to nothing.** Check that the address is an IP address rather than a host name, and that the server's port is open to it.
 - **Hosting a migratable session fails by IP with an address length error.** The address and port together must fit in 64 characters. Use an IPv4 address in **Hosted Address**.
 

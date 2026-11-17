@@ -49,6 +49,34 @@ namespace Nucleus.Integrations.Unity.Transports
         internal static ulong GetSteamId(bool isGameServer) => isGameServer ? SteamGameServer.GetSteamID().m_SteamID : SteamUser.GetSteamID().m_SteamID;
 
         /// <summary>
+        /// Starts Steam fetching its network config and certificate on the chosen interface, ahead of the first link.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <remarks>Steam does this on its own at the first link otherwise; a call once it has started changes nothing.</remarks>
+        internal static void InitRelayNetworkAccess(bool isGameServer)
+        {
+            if (isGameServer)
+                SteamGameServerNetworkingUtils.InitRelayNetworkAccess();
+            else
+                SteamNetworkingUtils.InitRelayNetworkAccess();
+        }
+
+        /// <summary>
+        /// Returns whether the player's interface has settled its network config, having fetched it or given up on it.
+        /// </summary>
+        /// <returns>True once a dial would no longer fail for want of Steam's certificate.</returns>
+        /// <remarks>
+        /// A dial made straight after Steam starts, before the config has arrived, closes with <c>k_ESteamNetConnectionEnd_Local_BadCert</c>
+        /// rather than waiting for it. A config Steam failed to fetch also counts as settled, so the dial goes ahead and fails on its own.
+        /// </remarks>
+        internal static bool IsNetworkConfigSettled()
+        {
+            SteamNetworkingUtils.GetRelayNetworkStatus(out SteamRelayNetworkStatus_t relayNetworkStatus);
+
+            return relayNetworkStatus.m_eAvailNetworkConfig is ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_Current or ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_Previously or ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_Failed or ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_CannotTry;
+        }
+
+        /// <summary>
         /// Opens a listen socket that peers reach by this account's Steam identity.
         /// </summary>
         /// <param name="isGameServer">True for the game server interface.</param>
