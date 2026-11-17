@@ -32,7 +32,10 @@ namespace Nucleus.Integrations.Unity.Editor
             using (new EditorGUI.IndentLevelScope())
             {
                 if (isSteamIdShown)
+                {
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("_remoteSteamId"));
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("_isRelayOnlyEnabled"));
+                }
 
                 if (isIpAddressShown)
                 {
@@ -48,6 +51,8 @@ namespace Nucleus.Integrations.Unity.Editor
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_maximumConnections"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_maximumTransmissionUnit"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_sendRateKilobytesPerSecond"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("_connectingTimeoutSeconds"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("_connectedTimeoutSeconds"));
 
             SerializedProperty hostMigrationProperty = serializedObject.FindProperty("_isHostMigrationEnabled");
 

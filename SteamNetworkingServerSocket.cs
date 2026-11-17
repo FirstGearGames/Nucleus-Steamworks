@@ -136,11 +136,11 @@ namespace Nucleus.Integrations.Unity.Transports
                     return GetResultTask(ConnectionStateChangeResult.UnspecifiedError);
                 }
 
-                _listenSocket = SteamSockets.CreateListenSocketIP(IsGameServer, ref bindAddress, SteamSockets.CreateConnectionOptions(steamNetworkingTransport.SendRateKilobytesPerSecond));
+                _listenSocket = SteamSockets.CreateListenSocketIP(IsGameServer, ref bindAddress, SteamSockets.CreateConnectionOptions(steamNetworkingTransport));
             }
             else
             {
-                _listenSocket = SteamSockets.CreateListenSocketP2P(IsGameServer, SteamSockets.CreateConnectionOptions(steamNetworkingTransport.SendRateKilobytesPerSecond));
+                _listenSocket = SteamSockets.CreateListenSocketP2P(IsGameServer, SteamSockets.CreateConnectionOptions(steamNetworkingTransport));
             }
 
             if (_listenSocket == HSteamListenSocket.Invalid)

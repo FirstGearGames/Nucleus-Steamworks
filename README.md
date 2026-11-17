@@ -30,6 +30,7 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 |---|---|---|
 | Addressing | Steam ID | **Steam ID** goes through Valve's relay. **IP Address** listens on a port and connects to an address. |
 | Remote Steam Id | 0 | Who a client connects to by Steam ID. 0, or your own ID, joins your own server. |
+| Is Relay Only Enabled | off | Carry Steam ID links over Valve's relay only, so no player learns another's IP address. Off lets Steam connect two players directly when their Steam settings allow it, which can lower ping. |
 | Remote Address | empty | Who a client connects to by IP, optionally with a port such as `203.0.113.7:7777`. Host names are not looked up. |
 | Port | 7777 | The port the server listens on by IP, and the one a client uses when its address names none. |
 | Bind Address | empty | The local address the server listens on by IP. Empty listens on every interface. |
@@ -37,8 +38,10 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 | Maximum Connections | 0 | The most clients the server accepts at once. 0 accepts any number. |
 | Maximum Transmission Unit | 1200 | The largest datagram built before it is split. |
 | Send Rate Kilobytes Per Second | 4096 | The rate Steam sends at on each connection. Steam's own is 256, slower than nearly any player's line, so a large join queues behind it. 0 keeps Steam's own. |
+| Connecting Timeout Seconds | 10 | How long a link may spend connecting before Steam gives up on it, on the client and on the server. 0 keeps Steam's own, also 10. |
+| Connected Timeout Seconds | 10 | How long a connected peer waits without hearing from the other side before Steam drops the link. 0 keeps Steam's own, also 10. |
 
-`RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start.
+`RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start. The two timeouts are the transport's `Configuration.ConnectingTimeoutSeconds` and `Configuration.ConnectedTimeoutSeconds`, read when the server starts and when the client connects; a transport set up from code rather than by this component starts at Nucleus's own defaults, 10 and 15.
 
 ## Host migration (Nucleus Pro)
 
@@ -63,7 +66,7 @@ When players connect by IP, the host advertises **Hosted Address**. Leave it emp
 
 - **Connecting to your own Steam ID over the relay fails.** Steam does not route a player back to itself, so testing by Steam ID needs two Steam accounts on two machines. With one account, test by **IP Address** instead: several game instances on one machine can each host on their own port.
 - **A host's own client never appears in Steam.** It is paired with the server inside the process, so its traffic never leaves the machine.
-- **A client that cannot reach its server waits for Steam to give up.** That is Steam's own connect timeout unless `SteamNetworkingTransport.ConnectTimeoutMilliseconds` sets a shorter one.
+- **A client that cannot reach its server waits for Steam to give up.** That is **Connecting Timeout Seconds**, unless `SteamNetworkingTransport.ConnectTimeoutMilliseconds` sets a shorter wait; whichever ends first stops the connect.
 - **The world stays put when the link drops** while host migration is on. That is deliberate: it is what the next host carries on from.
 - **"Steam was shut down while the server was running" or "while the client was connected".** Your game shut Steam down before stopping the transport. Steam closed every link as it went, so the transport stops and forgets them rather than throwing; stop the transport first to close them cleanly.
 

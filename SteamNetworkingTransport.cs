@@ -102,6 +102,15 @@ namespace Nucleus.Integrations.Unity.Transports
         public uint ConnectTimeoutMilliseconds { get; set; }
 
         /// <summary>
+        /// Whether a link addressed by Steam ID is carried over Valve's relay network only, so no peer learns another's IP address.
+        /// </summary>
+        /// <remarks>
+        /// Off lets Steam try a direct route between two players when each player's Steam settings allow it, which can lower ping. Read
+        /// when the server starts and when the client connects, and used only under <see cref="SteamAddressing.SteamId"/>.
+        /// </remarks>
+        public bool IsRelayOnlyEnabled { get; set; }
+
+        /// <summary>
         /// The default for <see cref="SendRateKilobytesPerSecond"/>, four mebibytes a second, well inside an ordinary home or mobile line.
         /// </summary>
         public const uint DefaultSendRateKilobytesPerSecond = 4_096;

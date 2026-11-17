@@ -217,6 +217,47 @@ namespace Nucleus.Integrations.Unity.Tests
         }
 
         /// <summary>
+        /// A client dialling by IP a port where nothing listens gives up when the transport's connecting timeout runs out, which Steam
+        /// enforces, rather than after Steam's own.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(60000)]
+        public IEnumerator RemoteClient_ByIpAddress_ToAPortWithNothingListening_GivesUpAfterTheConnectingTimeout()
+        {
+            const ushort ConnectingTimeoutSeconds = 2;
+
+            GameObject clientObject = NewInactiveObject("SteamClient");
+            UnityCoreManager clientCoreManager = clientObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager clientTransportManager = clientObject.AddComponent<UnityTransportManager>();
+            SteamTransport clientSteamTransport = clientObject.AddComponent<SteamTransport>();
+            clientSteamTransport.RemoteAddress = $"127.0.0.1:{ProbeFreeUdpPort()}";
+            clientObject.SetActive(true);
+
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            TransportManager clientTransportManagerCore = clientCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport clientTransport = (SteamNetworkingTransport)clientTransportManagerCore.Transports[0];
+            clientTransport.Addressing = SteamAddressing.IpAddress;
+            clientTransport.Configuration.ConnectingTimeoutSeconds = ConnectingTimeoutSeconds;
+
+            LogAssert.ignoreFailingMessages = true;
+
+            float startSeconds = Time.realtimeSinceStartup;
+            Task clientStartTask = clientTransportManager.StartClientAsync();
+
+            yield return WaitForTask(clientStartTask);
+
+            float elapsedSeconds = Time.realtimeSinceStartup - startSeconds;
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.IsTrue(clientStartTask.IsCompleted, "The client was still connecting when the wait ran out.");
+            Assert.IsFalse(IsClientAuthenticated(clientTransportManagerCore), "The client connected to a port where nothing listens.");
+            Assert.That(elapsedSeconds, Is.InRange(ConnectingTimeoutSeconds - 0.5f, ConnectingTimeoutSeconds + 3f), $"The client gave up after [{elapsedSeconds:F2}] s rather than about [{ConnectingTimeoutSeconds}] s.");
+        }
+
+        /// <summary>
         /// Returns whether the manager's own client is connected and authenticated.
         /// </summary>
         private static bool IsClientAuthenticated(TransportManager transportManager) =>

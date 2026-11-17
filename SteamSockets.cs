@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using Nucleus.Transports;
 using Steamworks;
 
 namespace Nucleus.Integrations.Unity.Transports
@@ -62,26 +64,42 @@ namespace Nucleus.Integrations.Unity.Transports
         internal static HSteamListenSocket CreateListenSocketIP(bool isGameServer, ref SteamNetworkingIPAddr localAddress, SteamNetworkingConfigValue_t[] options) => isGameServer ? SteamGameServerNetworkingSockets.CreateListenSocketIP(ref localAddress, GetOptionCount(options), options) : SteamNetworkingSockets.CreateListenSocketIP(ref localAddress, GetOptionCount(options), options);
 
         /// <summary>
-        /// Builds the settings a socket's connections are opened with: Steam's send rate held at the one given.
+        /// Builds the settings a socket's connections are opened with: Steam's send rate held at the transport's, its timeouts, and its
+        /// relay only setting.
         /// </summary>
-        /// <param name="sendRateKilobytesPerSecond">The send rate, in kilobytes of 1,024 bytes a second, or zero for Steam's own.</param>
-        /// <returns>The settings, or <see langword="null"/> to leave Steam's own in place.</returns>
+        /// <param name="steamNetworkingTransport">The transport whose settings are read.</param>
+        /// <returns>The settings.</returns>
         /// <remarks>
         /// The rate is set as both Steam's lowest and highest, because Steam sends at its lowest unless something raises it, and nothing
-        /// does, so a higher ceiling alone changes nothing. Built once per socket, when it opens.
+        /// does, so a higher ceiling alone changes nothing. A timeout of zero, and a rate of zero, keep Steam's own. Built once per socket,
+        /// when it opens.
         /// </remarks>
-        internal static SteamNetworkingConfigValue_t[] CreateConnectionOptions(uint sendRateKilobytesPerSecond)
+        internal static SteamNetworkingConfigValue_t[] CreateConnectionOptions(SteamNetworkingTransport steamNetworkingTransport)
         {
-            if (sendRateKilobytesPerSecond == 0)
-                return null;
+            Configuration configuration = steamNetworkingTransport.Configuration;
+            uint sendRateKilobytesPerSecond = steamNetworkingTransport.SendRateKilobytesPerSecond;
 
-            int sendRateBytesPerSecond = (int)Math.Min(sendRateKilobytesPerSecond * 1_024UL, int.MaxValue);
+            List<SteamNetworkingConfigValue_t> options = new();
 
-            return new[]
+            if (sendRateKilobytesPerSecond > 0)
             {
-                CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin, sendRateBytesPerSecond),
-                CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, sendRateBytesPerSecond),
-            };
+                int sendRateBytesPerSecond = (int)Math.Min(sendRateKilobytesPerSecond * 1_024UL, int.MaxValue);
+
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin, sendRateBytesPerSecond));
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, sendRateBytesPerSecond));
+            }
+
+            if (configuration.ConnectingTimeoutSeconds > 0)
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutInitial, configuration.ConnectingTimeoutSeconds * 1_000));
+
+            if (configuration.ConnectedTimeoutSeconds > 0)
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutConnected, configuration.ConnectedTimeoutSeconds * 1_000));
+
+            // Only a Steam ID link tries a direct route; an IP address is dialled as given.
+            if (steamNetworkingTransport.IsRelayOnlyEnabled && steamNetworkingTransport.Addressing is SteamAddressing.SteamId)
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable, Constants.k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Disable));
+
+            return options.ToArray();
         }
 
         /// <summary>

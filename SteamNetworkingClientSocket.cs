@@ -162,7 +162,7 @@ namespace Nucleus.Integrations.Unity.Transports
             }
 
             _connectionStatusChangedCallback = SteamSockets.CreateStatusCallback(isGameServer: false, OnConnectionStatusChanged);
-            SteamNetworkingConfigValue_t[] connectionOptions = SteamSockets.CreateConnectionOptions(steamNetworkingTransport.SendRateKilobytesPerSecond);
+            SteamNetworkingConfigValue_t[] connectionOptions = SteamSockets.CreateConnectionOptions(steamNetworkingTransport);
             _steamConnection = isIpAddressing ? SteamSockets.ConnectByIPAddress(ref remoteIpAddress, connectionOptions) : SteamSockets.ConnectP2P(remoteSteamId, connectionOptions);
 
             if (_steamConnection == HSteamNetConnection.Invalid)
