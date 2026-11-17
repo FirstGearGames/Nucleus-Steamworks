@@ -84,6 +84,8 @@ When players connect by IP, the host advertises **Hosted Address**. Leave it emp
 
 Each second the client sends a numbered probe to the server on both channels, and the server echoes each one back. The host logs how many probes arrived from each client and how many bytes arrived; the client logs how many echoes came back. Both log every send Steam refused, with Steam's reason. It starts Steam itself, so turn off **Is Steam Started Here** if your game already does.
 
+From code, `SteamNetworkingTransport.TryGetLinkStatus(connection, out SteamLinkStatus linkStatus)` reads Steam's own view of a link: ping, quality each way, send and receive rates, Steam's send rate, and the reliable and unreliable bytes still queued. On a server pass a remote client's Connection; on a client pass its own or its server Connection. It returns false for a host's own client, which never crosses Steam. Each read allocates a little in Steamworks.NET, so read it a few times a second rather than every frame.
+
 ## Tests
 
 The play tests in `Tests` run over a real Steam connection. They need the Steam client running and signed in, and a `steam_appid.txt` holding an app id (480, Spacewar, for testing) in the project folder. They are skipped when Steam cannot be initialised.

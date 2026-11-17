@@ -412,6 +412,22 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
+        /// Reads Steam's live status of the link to the server.
+        /// </summary>
+        /// <param name="connection">This socket's own Connection, or the one inbound packets from the server are attributed to.</param>
+        /// <param name="linkStatus">The status, when there is a Steam link to read.</param>
+        /// <returns>True when <paramref name="connection"/> names this client's Steam link; a paired client has none.</returns>
+        internal bool TryGetLinkStatus(Connection connection, out SteamLinkStatus linkStatus)
+        {
+            if (connection is not null && _pairedServerSocket is null && (ReferenceEquals(connection, Connection) || ReferenceEquals(connection, _serverStandIn)))
+                return SteamSockets.TryGetLinkStatus(isGameServer: false, _steamConnection, out linkStatus);
+
+            linkStatus = default;
+
+            return false;
+        }
+
+        /// <summary>
         /// Handles Steam's report of the connection changing state. Raised from inside Steam's callback pump on the main thread.
         /// </summary>
         /// <param name="statusChanged">What changed.</param>

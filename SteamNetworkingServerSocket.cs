@@ -407,6 +407,22 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
+        /// Reads Steam's live status of the link to a remote client.
+        /// </summary>
+        /// <param name="connection">The client.</param>
+        /// <param name="linkStatus">The status, when there is a Steam link to read.</param>
+        /// <returns>True when the client is held over a Steam link; the paired own client has none.</returns>
+        internal bool TryGetLinkStatus(Connection connection, out SteamLinkStatus linkStatus)
+        {
+            if (connection is not null && _steamConnectionsByConnection.TryGetValue(connection, out HSteamNetConnection steamConnection))
+                return SteamSockets.TryGetLinkStatus(IsGameServer, steamConnection, out linkStatus);
+
+            linkStatus = default;
+
+            return false;
+        }
+
+        /// <summary>
         /// Queues a client Steam has connected, after the cap and an id allow it.
         /// </summary>
         /// <param name="steamConnection">The connection, already connected.</param>

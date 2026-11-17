@@ -249,6 +249,35 @@ namespace Nucleus.Integrations.Unity.Transports
         internal static int ReceiveMessagesOnConnection(bool isGameServer, HSteamNetConnection connection, IntPtr[] messages) => isGameServer ? SteamGameServerNetworkingSockets.ReceiveMessagesOnConnection(connection, messages, messages.Length) : SteamNetworkingSockets.ReceiveMessagesOnConnection(connection, messages, messages.Length);
 
         /// <summary>
+        /// Reads Steam's live status of one connection.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="connection">The connection, or invalid for none.</param>
+        /// <param name="linkStatus">The status, when Steam reported one.</param>
+        /// <returns>True when Steam reported the connection's status; false for an invalid connection, or once Steam has shut down.</returns>
+        internal static bool TryGetLinkStatus(bool isGameServer, HSteamNetConnection connection, out SteamLinkStatus linkStatus)
+        {
+            linkStatus = default;
+
+            if (connection == HSteamNetConnection.Invalid || IsShutDown(isGameServer))
+                return false;
+
+            SteamNetConnectionRealTimeStatus_t realTimeStatus = default;
+            SteamNetConnectionRealTimeLaneStatus_t laneStatus = default;
+
+            EResult result = isGameServer
+                ? SteamGameServerNetworkingSockets.GetConnectionRealTimeStatus(connection, ref realTimeStatus, nLanes: 0, ref laneStatus)
+                : SteamNetworkingSockets.GetConnectionRealTimeStatus(connection, ref realTimeStatus, nLanes: 0, ref laneStatus);
+
+            if (result is not EResult.k_EResultOK)
+                return false;
+
+            linkStatus = new(in realTimeStatus);
+
+            return true;
+        }
+
+        /// <summary>
         /// Creates the status callback for the chosen interface, which Steam raises from inside its own callback pump.
         /// </summary>
         internal static Callback<SteamNetConnectionStatusChangedCallback_t> CreateStatusCallback(bool isGameServer, Callback<SteamNetConnectionStatusChangedCallback_t>.DispatchDelegate handler) => isGameServer ? Callback<SteamNetConnectionStatusChangedCallback_t>.CreateGameServer(handler) : Callback<SteamNetConnectionStatusChangedCallback_t>.Create(handler);

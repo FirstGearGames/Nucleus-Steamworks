@@ -159,5 +159,28 @@ namespace Nucleus.Integrations.Unity.Transports
 
             return true;
         }
+
+        /// <summary>
+        /// Reads Steam's live status of the link carrying a Connection: its ping, quality, rates and what is queued on it.
+        /// </summary>
+        /// <param name="connection">A remote client on this peer's server, or, on a client, its link to the server.</param>
+        /// <param name="linkStatus">The status, when there is a Steam link to read.</param>
+        /// <returns>True when the Connection rides a Steam link. A host's own client, paired in process, has none.</returns>
+        /// <remarks>
+        /// Steamworks.NET allocates a little marshalling each call, so read it at a display's pace, such as a few times a second, rather
+        /// than every frame.
+        /// </remarks>
+        public bool TryGetLinkStatus(Connection connection, out SteamLinkStatus linkStatus)
+        {
+            if (ClientSocket is not null && ClientSocket.TryGetLinkStatus(connection, out linkStatus))
+                return true;
+
+            if (ServerSocket is not null && ServerSocket.TryGetLinkStatus(connection, out linkStatus))
+                return true;
+
+            linkStatus = default;
+
+            return false;
+        }
     }
 }

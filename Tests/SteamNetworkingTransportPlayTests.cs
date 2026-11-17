@@ -258,6 +258,70 @@ namespace Nucleus.Integrations.Unity.Tests
         }
 
         /// <summary>
+        /// A remote client's link has a Steam status on both sides, and a host's own client, paired in process, has none.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator RemoteClient_ByIpAddress_HasALinkStatusOnBothSides_AndTheHostsOwnClientHasNone()
+        {
+            ushort port = ProbeFreeUdpPort();
+
+            GameObject serverObject = NewInactiveObject("SteamServer");
+            UnityCoreManager serverCoreManager = serverObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager serverTransportManager = serverObject.AddComponent<UnityTransportManager>();
+            serverObject.AddComponent<SteamTransport>();
+            serverObject.SetActive(true);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+
+            TransportManager serverTransportManagerCore = serverCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport serverTransport = (SteamNetworkingTransport)serverTransportManagerCore.Transports[0];
+            serverTransport.Addressing = SteamAddressing.IpAddress;
+            serverTransport.Configuration.Port = port;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+            yield return WaitForTask(serverTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(serverTransportManagerCore));
+            Assert.IsTrue(IsClientAuthenticated(serverTransportManagerCore), "The host's own client never authenticated.");
+
+            serverTransportManagerCore.TryGetLocalClientConnection(out Connection hostClientConnection);
+
+            GameObject clientObject = NewInactiveObject("SteamClient");
+            UnityCoreManager clientCoreManager = clientObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager clientTransportManager = clientObject.AddComponent<UnityTransportManager>();
+            clientObject.AddComponent<SteamTransport>().RemoteAddress = $"127.0.0.1:{port}";
+            clientObject.SetActive(true);
+
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            TransportManager clientTransportManagerCore = clientCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport clientTransport = (SteamNetworkingTransport)clientTransportManagerCore.Transports[0];
+            clientTransport.Addressing = SteamAddressing.IpAddress;
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 2);
+            Assert.IsTrue(IsClientAuthenticated(clientTransportManagerCore), "The remote client never authenticated over Steam.");
+
+            Connection remoteClientConnection = null;
+
+            foreach (Connection activeConnection in serverTransportManagerCore.ActiveConnections)
+            {
+                if (!ReferenceEquals(activeConnection, hostClientConnection))
+                    remoteClientConnection = activeConnection;
+            }
+
+            clientTransportManagerCore.TryGetLocalClientConnection(out Connection clientConnection);
+            clientTransportManagerCore.TryGetServerConnection(out Connection serverConnection);
+
+            Assert.IsNotNull(remoteClientConnection, "The server holds no remote client.");
+            Assert.IsTrue(serverTransport.TryGetLinkStatus(remoteClientConnection, out SteamLinkStatus _), "The server read no link status for its remote client.");
+            Assert.IsTrue(clientTransport.TryGetLinkStatus(clientConnection, out SteamLinkStatus _), "The client read no link status through its own Connection.");
+            Assert.IsTrue(clientTransport.TryGetLinkStatus(serverConnection, out SteamLinkStatus _), "The client read no link status through its server Connection.");
+            Assert.IsFalse(serverTransport.TryGetLinkStatus(hostClientConnection, out SteamLinkStatus _), "The host's own client, paired in process, read a Steam link status.");
+        }
+
+        /// <summary>
         /// Returns whether the manager's own client is connected and authenticated.
         /// </summary>
         private static bool IsClientAuthenticated(TransportManager transportManager) =>
