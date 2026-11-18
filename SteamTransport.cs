@@ -20,8 +20,13 @@ namespace Nucleus.Integrations.Unity.Transports
     /// </remarks>
     [DisallowMultipleComponent]
     [NucleusHelpUrl(typeof(SteamTransport))]
-    public partial class SteamTransport : NetworkTransport
+    public class SteamTransport : NetworkTransport
     {
+        /// <summary>
+        /// How peers find each other: by Steam ID through Valve's relay network, or by IP address and port.
+        /// </summary>
+        public SteamAddressing Addressing => _addressing;
+
         /// <summary>
         /// The Steam ID a client connects to when peers are addressed by Steam ID: the hosting player's ID, or a game server's ID.
         /// </summary>
@@ -134,8 +139,6 @@ namespace Nucleus.Integrations.Unity.Transports
             _steamNetworkingTransport.SetBindAddress(_bindAddress);
             _steamNetworkingTransport.Configuration.MaximumTransmissionUnit = _maximumTransmissionUnit;
             _steamNetworkingTransport.SendRateKilobytesPerSecond = _sendRateKilobytesPerSecond;
-
-            EnableHostMigration(coreManager);
 
             return _steamNetworkingTransport;
         }

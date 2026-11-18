@@ -49,24 +49,6 @@ namespace Nucleus.Integrations.Unity.Editor
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_maximumTransmissionUnit"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_sendRateKilobytesPerSecond"));
 
-            SerializedProperty hostMigrationProperty = serializedObject.FindProperty("_isHostMigrationEnabled");
-
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Host Migration", EditorStyles.boldLabel);
-            EditorGUILayout.PropertyField(hostMigrationProperty);
-
-            if (hostMigrationProperty.hasMultipleDifferentValues || hostMigrationProperty.boolValue)
-            {
-                using (new EditorGUI.IndentLevelScope())
-                {
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("_directoryAddress"));
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("_directoryPort"));
-
-                    if (isIpAddressShown)
-                        EditorGUILayout.PropertyField(serializedObject.FindProperty("_hostedAddress"));
-                }
-            }
-
             serializedObject.ApplyModifiedProperties();
         }
     }

@@ -13,7 +13,7 @@
 
 This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either:
 
-- In the Package Manager, choose **Install package from git URL** and enter `https://github.com/FirstGearGames/Nucleus-Steamworks.git`. Add `#v1.0.0` to the end to pin a release.
+- In the Package Manager, choose **Install package from git URL** and enter `https://github.com/FirstGearGames/Nucleus-Steamworks.git`. Add `#v1.1.0` to the end to pin a release.
 - Or, in the Package Manager, choose **Install package from disk** and pick this folder's `package.json`, or add `"com.firstgeargames.nucleus.steamworks": "file:<path to this folder>"` to `Packages/manifest.json`. Edits made in Unity are saved straight back to this folder.
 - Or copy the folder into your project's `Packages` or `Assets` folder.
 
@@ -44,20 +44,25 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 
 With host migration on, a session outlives whoever is hosting it. When the host leaves or crashes, one of the remaining players takes over, the others reconnect to them, and play carries on with the world they already had.
 
-It needs Nucleus Pro and a running [Newfarm](https://github.com/FirstGearGames/Newfarm) session directory, which every player can reach. The code compiles with Nucleus Free too, but there no session is opened.
+It needs Nucleus Pro and a [Newfarm](https://github.com/FirstGearGames/Newfarm) session directory that every player can reach. The public directory at `newfarm.nucleus-networking.com` is free to use and is the default. The code compiles with Nucleus Free too, but there no session is opened.
 
-1. On the **Steam Transport**, turn on **Is Host Migration Enabled** (under **Host Migration**) and set the **Directory Address**, an IP address or a host name, and the **Directory Port** (default `127.0.0.1:47778`). A host name is looked up through DNS each time a session is opened or joined, and a lookup that fails is logged and treated as an unreachable directory, so `OpenSessionAsync()` tries it again.
-2. Start and join exactly as you would without it, as in the quick start above.
+1. Add a **Steam Host Migration** component beside the **Steam Transport**. Having it there is what turns host migration on.
+2. Leave **Directory Address** and **Directory Port** at the public directory (`newfarm.nucleus-networking.com:47778`), or point them at your own. A host name is looked up through DNS each time a session is opened or joined, and a lookup that fails is logged and treated as an unreachable directory, so `OpenSessionAsync()` tries it again.
+3. Start and join exactly as you would without it, as in the quick start above.
 
-That is all. Once the server is running it opens a session with the directory, and every player that joins is told which session it is in, so nobody hands out anything new.
+That is all. Once the server is running it opens a session with the directory, and every player that joins is told which session it is in, so nobody hands out anything new. A host that stops its server or quits hands the session on at once.
 
-If the server cannot open its session, `steamTransport.Migration.SessionOpenFailed` is raised with a `SessionOpenResult` saying why, such as `DirectoryUnreachable` or `DirectoryAtCapacity`. The game carries on without host migration, and `await steamTransport.Migration.OpenSessionAsync()` tries again and returns the result.
+If the server cannot open its session, `steamHostMigration.Migration.SessionOpenFailed` is raised with a `SessionOpenResult` saying why, such as `DirectoryUnreachable` or `DirectoryAtCapacity`. The game carries on without host migration, and `await steamHostMigration.Migration.OpenSessionAsync()` tries again and returns the result.
 
-To hand hosting to someone else on purpose, the host calls `steamTransport.TrySurrenderHostingSession()`. It stays in the game as an ordinary player.
+To hand hosting to someone else on purpose, the host calls `steamHostMigration.TrySurrenderHostingSession()`. It stays in the game as an ordinary player.
 
-`steamTransport.Migration` also raises `Promoted` when this player takes over, `Rejoined` when it follows the session to a new host, and `Abandoned` when the session could not be carried on. A player joining after a handover needs the new host's Steam ID, or can call `JoinSessionAsync(steamTransport.SessionId)` with the session id read on any player already in it.
+`steamHostMigration.Migration` also raises `Promoted` when this player takes over, `Rejoined` when it follows the session to a new host, and `Abandoned` when the session could not be carried on. A player joining after a handover needs the new host's Steam ID, or can call `steamHostMigration.JoinSessionAsync(sessionId)` with the `SessionId` read on any player already in it.
 
-When players connect by IP, the host advertises **Hosted Address**. Leave it empty to use the bind address, or this machine's own IPv4 address, which only reaches players on the same network. A host reached through a router sets it to its public address with a forwarded port.
+When players connect by IP, the host advertises **Hosted Address** on the **Steam Host Migration**. Leave it empty to use the bind address, or this machine's own IPv4 address, which only reaches players on the same network. A host reached through a router sets it to its public address with a forwarded port.
+
+### Upgrading from 1.0.0
+
+Host migration moved off the **Steam Transport** onto its own **Steam Host Migration** component, built on the integration's `NetworkHostMigration`. Unity cannot carry the old settings across, so add the component and set it up again: there is no **Is Host Migration Enabled** any more, since the component being there is the switch. `Migration`, `SessionId`, `StartHostingSessionAsync`, `JoinSessionAsync` and `TrySurrenderHostingSession` moved with it. It needs a Nucleus Unity integration that includes `NetworkHostMigration`.
 
 ## Things that look like bugs but are not
 
