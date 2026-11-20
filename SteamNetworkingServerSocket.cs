@@ -125,6 +125,9 @@ namespace Nucleus.Integrations.Unity.Transports
             SteamNetworkingTransport steamNetworkingTransport = (SteamNetworkingTransport)Transport;
             IsGameServer = steamNetworkingTransport.IsGameServer;
 
+            SteamSockets.InitRelayNetworkAccess(IsGameServer);
+            steamNetworkingTransport.ApplyNetworkConditions();
+
             if (steamNetworkingTransport.Addressing is SteamAddressing.IpAddress)
             {
                 Configuration configuration = steamNetworkingTransport.Configuration;
@@ -136,11 +139,11 @@ namespace Nucleus.Integrations.Unity.Transports
                     return GetResultTask(ConnectionStateChangeResult.UnspecifiedError);
                 }
 
-                _listenSocket = SteamSockets.CreateListenSocketIP(IsGameServer, ref bindAddress, SteamSockets.CreateConnectionOptions(steamNetworkingTransport.SendRateKilobytesPerSecond));
+                _listenSocket = SteamSockets.CreateListenSocketIP(IsGameServer, ref bindAddress, SteamSockets.CreateConnectionOptions(steamNetworkingTransport));
             }
             else
             {
-                _listenSocket = SteamSockets.CreateListenSocketP2P(IsGameServer, SteamSockets.CreateConnectionOptions(steamNetworkingTransport.SendRateKilobytesPerSecond));
+                _listenSocket = SteamSockets.CreateListenSocketP2P(IsGameServer, SteamSockets.CreateConnectionOptions(steamNetworkingTransport));
             }
 
             if (_listenSocket == HSteamListenSocket.Invalid)
@@ -200,7 +203,7 @@ namespace Nucleus.Integrations.Unity.Transports
                 return;
             }
 
-            if (State is not LocalConnectionState.Connected || outgoingPacket.Receiver is null || !_steamConnectionsByConnection.TryGetValue(outgoingPacket.Receiver, out HSteamNetConnection steamConnection))
+            if (State is not LocalConnectionState.Connected || outgoingPacket.Receiver is null || !_steamConnectionsByConnection.TryGetValue(outgoingPacket.Receiver, out HSteamNetConnection steamConnection) || SteamSockets.IsShutDown(IsGameServer))
             {
                 Nucleus.Managers.Transports.TransportManager.PacketFailed(outgoingPacket);
 
@@ -229,6 +232,17 @@ namespace Nucleus.Integrations.Unity.Transports
         protected override void ReceivePackets(ref List<IncomingPacket> receivedPackets)
         {
             ApplyPendingClientEvents();
+
+            /* A Steam shut down while the server ran took every link with it, and Steamworks.NET throws on any further call, so the server
+             * stops, forgetting its handles, rather than reading from a dead interface. */
+            if (_pollGroup != HSteamNetPollGroup.Invalid && SteamSockets.IsShutDown(IsGameServer))
+            {
+                Logger<SteamNetworkingServerSocket>.LogWarning("Steam was shut down while the server was running, so the server stopped. Shut Steam down only after the transport stops.");
+
+                _ = DisconnectAsync();
+
+                return;
+            }
 
             if (_pollGroup != HSteamNetPollGroup.Invalid)
             {
@@ -394,6 +408,22 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
+        /// Reads Steam's live status of the link to a remote client.
+        /// </summary>
+        /// <param name="connection">The client.</param>
+        /// <param name="linkStatus">The status, when there is a Steam link to read.</param>
+        /// <returns>True when the client is held over a Steam link; the paired own client has none.</returns>
+        internal bool TryGetLinkStatus(Connection connection, out SteamLinkStatus linkStatus)
+        {
+            if (connection is not null && _steamConnectionsByConnection.TryGetValue(connection, out HSteamNetConnection steamConnection))
+                return SteamSockets.TryGetLinkStatus(IsGameServer, steamConnection, out linkStatus);
+
+            linkStatus = default;
+
+            return false;
+        }
+
+        /// <summary>
         /// Queues a client Steam has connected, after the cap and an id allow it.
         /// </summary>
         /// <param name="steamConnection">The connection, already connected.</param>
@@ -464,7 +494,9 @@ namespace Nucleus.Integrations.Unity.Transports
 
             // Steam posts no callback for a connection this side closes, so the departure is queued here.
             ForgetAndQueueDeparture(steamConnection, connection);
-            SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled);
+
+            if (!SteamSockets.IsShutDown(IsGameServer))
+                SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled);
 
             return GetResultTask(ConnectionStateChangeResult.Success);
         }
@@ -588,7 +620,8 @@ namespace Nucleus.Integrations.Unity.Transports
                 _connectionsBySteamConnection.Remove(steamConnection);
                 _steamConnectionsByConnection.Remove(connection);
 
-                SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled: false);
+                if (!SteamSockets.IsShutDown(IsGameServer))
+                    SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled: false);
             }
 
             _idBySocketPool.ReturnUnsafe(idBySocket);
@@ -617,10 +650,13 @@ namespace Nucleus.Integrations.Unity.Transports
                 return;
 
             List<Connection> departingConnections = ListPool<Connection>.Rent();
+            bool isShutDown = SteamSockets.IsShutDown(IsGameServer);
 
             foreach (KeyValuePair<HSteamNetConnection, Connection> connectionKeyValuePair in _connectionsBySteamConnection)
             {
-                SteamSockets.CloseConnection(IsGameServer, connectionKeyValuePair.Key, isLingerEnabled: false);
+                if (!isShutDown)
+                    SteamSockets.CloseConnection(IsGameServer, connectionKeyValuePair.Key, isLingerEnabled: false);
+
                 departingConnections.Add(connectionKeyValuePair.Value);
             }
 
@@ -636,22 +672,23 @@ namespace Nucleus.Integrations.Unity.Transports
         /// <summary>
         /// Closes the listen socket and poll group and stops listening for Steam's callbacks.
         /// </summary>
+        /// <remarks>A Steam already shut down has closed both itself, so their handles are only forgotten then.</remarks>
         private void ReleaseSteam()
         {
             _connectionStatusChangedCallback?.Dispose();
             _connectionStatusChangedCallback = null;
 
-            if (_pollGroup != HSteamNetPollGroup.Invalid)
+            if (!SteamSockets.IsShutDown(IsGameServer))
             {
-                SteamSockets.DestroyPollGroup(IsGameServer, _pollGroup);
-                _pollGroup = HSteamNetPollGroup.Invalid;
+                if (_pollGroup != HSteamNetPollGroup.Invalid)
+                    SteamSockets.DestroyPollGroup(IsGameServer, _pollGroup);
+
+                if (_listenSocket != HSteamListenSocket.Invalid)
+                    SteamSockets.CloseListenSocket(IsGameServer, _listenSocket);
             }
 
-            if (_listenSocket != HSteamListenSocket.Invalid)
-            {
-                SteamSockets.CloseListenSocket(IsGameServer, _listenSocket);
-                _listenSocket = HSteamListenSocket.Invalid;
-            }
+            _pollGroup = HSteamNetPollGroup.Invalid;
+            _listenSocket = HSteamListenSocket.Invalid;
         }
 
         /// <inheritdoc/>

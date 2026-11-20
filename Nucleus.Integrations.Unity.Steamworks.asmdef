@@ -22,7 +22,8 @@
     ],
     "autoReferenced": true,
     "defineConstraints": [
-        "NUCLEUS_STEAMWORKS"
+        "NUCLEUS_STEAMWORKS",
+        "!DISABLESTEAMWORKS"
     ],
     "versionDefines": [
         {

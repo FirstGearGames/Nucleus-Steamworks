@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Nucleus.Connections;
@@ -214,6 +215,250 @@ namespace Nucleus.Integrations.Unity.Tests
 
             serverCoreManager.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
             clientCoreManager.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+        }
+
+        /// <summary>
+        /// A client dialling by IP a port where nothing listens gives up when the transport's connecting timeout runs out, which Steam
+        /// enforces, rather than after Steam's own.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(60000)]
+        public IEnumerator RemoteClient_ByIpAddress_ToAPortWithNothingListening_GivesUpAfterTheConnectingTimeout()
+        {
+            const ushort ConnectingTimeoutSeconds = 2;
+
+            GameObject clientObject = NewInactiveObject("SteamClient");
+            UnityCoreManager clientCoreManager = clientObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager clientTransportManager = clientObject.AddComponent<UnityTransportManager>();
+            SteamTransport clientSteamTransport = clientObject.AddComponent<SteamTransport>();
+            clientSteamTransport.RemoteAddress = $"127.0.0.1:{ProbeFreeUdpPort()}";
+            clientObject.SetActive(true);
+
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            TransportManager clientTransportManagerCore = clientCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport clientTransport = (SteamNetworkingTransport)clientTransportManagerCore.Transports[0];
+            clientTransport.Addressing = SteamAddressing.IpAddress;
+            clientTransport.Configuration.ConnectingTimeoutSeconds = ConnectingTimeoutSeconds;
+
+            LogAssert.ignoreFailingMessages = true;
+
+            float startSeconds = Time.realtimeSinceStartup;
+            Task clientStartTask = clientTransportManager.StartClientAsync();
+
+            yield return WaitForTask(clientStartTask);
+
+            float elapsedSeconds = Time.realtimeSinceStartup - startSeconds;
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.IsTrue(clientStartTask.IsCompleted, "The client was still connecting when the wait ran out.");
+            Assert.IsFalse(IsClientAuthenticated(clientTransportManagerCore), "The client connected to a port where nothing listens.");
+            Assert.That(elapsedSeconds, Is.InRange(ConnectingTimeoutSeconds - 0.5f, ConnectingTimeoutSeconds + 3f), $"The client gave up after [{elapsedSeconds:F2}] s rather than about [{ConnectingTimeoutSeconds}] s.");
+        }
+
+        /// <summary>
+        /// A remote client's link has a Steam status on both sides, and a host's own client, paired in process, has none.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator RemoteClient_ByIpAddress_HasALinkStatusOnBothSides_AndTheHostsOwnClientHasNone()
+        {
+            ushort port = ProbeFreeUdpPort();
+
+            GameObject serverObject = NewInactiveObject("SteamServer");
+            UnityCoreManager serverCoreManager = serverObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager serverTransportManager = serverObject.AddComponent<UnityTransportManager>();
+            serverObject.AddComponent<SteamTransport>();
+            serverObject.SetActive(true);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+
+            TransportManager serverTransportManagerCore = serverCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport serverTransport = (SteamNetworkingTransport)serverTransportManagerCore.Transports[0];
+            serverTransport.Addressing = SteamAddressing.IpAddress;
+            serverTransport.Configuration.Port = port;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+            yield return WaitForTask(serverTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(serverTransportManagerCore));
+            Assert.IsTrue(IsClientAuthenticated(serverTransportManagerCore), "The host's own client never authenticated.");
+
+            serverTransportManagerCore.TryGetLocalClientConnection(out Connection hostClientConnection);
+
+            GameObject clientObject = NewInactiveObject("SteamClient");
+            UnityCoreManager clientCoreManager = clientObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager clientTransportManager = clientObject.AddComponent<UnityTransportManager>();
+            clientObject.AddComponent<SteamTransport>().RemoteAddress = $"127.0.0.1:{port}";
+            clientObject.SetActive(true);
+
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            TransportManager clientTransportManagerCore = clientCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport clientTransport = (SteamNetworkingTransport)clientTransportManagerCore.Transports[0];
+            clientTransport.Addressing = SteamAddressing.IpAddress;
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 2);
+            Assert.IsTrue(IsClientAuthenticated(clientTransportManagerCore), "The remote client never authenticated over Steam.");
+
+            Connection remoteClientConnection = null;
+
+            foreach (Connection activeConnection in serverTransportManagerCore.ActiveConnections)
+            {
+                if (!ReferenceEquals(activeConnection, hostClientConnection))
+                    remoteClientConnection = activeConnection;
+            }
+
+            clientTransportManagerCore.TryGetLocalClientConnection(out Connection clientConnection);
+            clientTransportManagerCore.TryGetServerConnection(out Connection serverConnection);
+
+            Assert.IsNotNull(remoteClientConnection, "The server holds no remote client.");
+            Assert.IsTrue(serverTransport.TryGetLinkStatus(remoteClientConnection, out SteamLinkStatus _), "The server read no link status for its remote client.");
+            Assert.IsTrue(clientTransport.TryGetLinkStatus(clientConnection, out SteamLinkStatus _), "The client read no link status through its own Connection.");
+            Assert.IsTrue(clientTransport.TryGetLinkStatus(serverConnection, out SteamLinkStatus _), "The client read no link status through its server Connection.");
+            Assert.IsFalse(serverTransport.TryGetLinkStatus(hostClientConnection, out SteamLinkStatus _), "The host's own client, paired in process, read a Steam link status.");
+        }
+
+        /// <summary>
+        /// Simulated latency reaches Steam: with 100 ms set, the ping Steam measures on a remote client's link rises by about 200 ms,
+        /// since both peers share this process and Steam delays each one's sends, and falls back once the conditions are cleared.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator RemoteClient_ByIpAddress_UnderSimulatedLatency_SteamsPingRises()
+        {
+            const uint LatencyMilliseconds = 100;
+
+            ushort port = ProbeFreeUdpPort();
+
+            GameObject serverObject = NewInactiveObject("SteamServer");
+            UnityCoreManager serverCoreManager = serverObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager serverTransportManager = serverObject.AddComponent<UnityTransportManager>();
+            serverObject.AddComponent<SteamTransport>();
+            serverObject.SetActive(true);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+
+            TransportManager serverTransportManagerCore = serverCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport serverTransport = (SteamNetworkingTransport)serverTransportManagerCore.Transports[0];
+            serverTransport.Addressing = SteamAddressing.IpAddress;
+            serverTransport.Configuration.Port = port;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+
+            GameObject clientObject = NewInactiveObject("SteamClient");
+            UnityCoreManager clientCoreManager = clientObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager clientTransportManager = clientObject.AddComponent<UnityTransportManager>();
+            clientObject.AddComponent<SteamTransport>().RemoteAddress = $"127.0.0.1:{port}";
+            clientObject.SetActive(true);
+
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            TransportManager clientTransportManagerCore = clientCoreManager.CoreManager.TransportManager;
+            ((SteamNetworkingTransport)clientTransportManagerCore.Transports[0]).Addressing = SteamAddressing.IpAddress;
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 1);
+            Assert.AreEqual(1, serverTransportManagerCore.ActiveConnections.Count, "The server does not hold the remote client.");
+
+            Connection remoteClientConnection = null;
+
+            foreach (Connection activeConnection in serverTransportManagerCore.ActiveConnections)
+                remoteClientConnection = activeConnection;
+
+            void OnClientReceivedProbe(in MessageContext messageContext, SteamProbeMessage steamProbeMessage) { }
+
+            clientCoreManager.CoreManager.MessageManager.RegisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+
+            serverTransport.TryGetLinkStatus(remoteClientConnection, out SteamLinkStatus baselineLinkStatus);
+            int baselinePingMilliseconds = baselineLinkStatus.PingMilliseconds;
+            int raisedPingMilliseconds = baselinePingMilliseconds + (int)LatencyMilliseconds * 3 / 2;
+
+            serverTransport.SetNetworkConditions(new NetworkConditions { LatencyMilliseconds = LatencyMilliseconds });
+
+            try
+            {
+                // Steam measures ping from its own keepalives and acknowledgements, so traffic keeps the measurement fresh.
+                yield return WaitUntil(() => IsPingAtLeast(serverTransport, remoteClientConnection, raisedPingMilliseconds));
+                serverTransport.TryGetLinkStatus(remoteClientConnection, out SteamLinkStatus raisedLinkStatus);
+                Assert.GreaterOrEqual(raisedLinkStatus.PingMilliseconds, raisedPingMilliseconds, $"Steam's ping rose from [{baselinePingMilliseconds}] ms only to [{raisedLinkStatus.PingMilliseconds}] ms under [{LatencyMilliseconds}] ms of simulated latency.");
+                Assert.AreEqual(LatencyMilliseconds, serverTransport.GetNetworkConditions()?.LatencyMilliseconds, "The transport did not keep the conditions it was given.");
+            }
+            finally
+            {
+                serverTransport.SetNetworkConditions(networkConditions: null);
+            }
+
+            yield return WaitUntil(() => !IsPingAtLeast(serverTransport, remoteClientConnection, raisedPingMilliseconds));
+            serverTransport.TryGetLinkStatus(remoteClientConnection, out SteamLinkStatus clearedLinkStatus);
+            Assert.Less(clearedLinkStatus.PingMilliseconds, raisedPingMilliseconds, "Steam's ping stayed raised after the conditions were cleared.");
+
+            clientCoreManager.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+        }
+
+        /// <summary>
+        /// A transport given simulated conditions clears them from Steam, which keeps them for the whole process, when it shuts down, so
+        /// they do not carry into the next play session.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(60000)]
+        public IEnumerator Transport_GivenNetworkConditions_ClearsThemFromSteamWhenShutDown()
+        {
+            const uint LatencyMilliseconds = 100;
+
+            GameObject serverObject = NewInactiveObject("SteamServer");
+            UnityCoreManager serverCoreManager = serverObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager serverTransportManager = serverObject.AddComponent<UnityTransportManager>();
+            serverObject.AddComponent<SteamTransport>();
+            serverObject.SetActive(true);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport serverTransport = (SteamNetworkingTransport)serverCoreManager.CoreManager.TransportManager.Transports[0];
+            serverTransport.SetNetworkConditions(new NetworkConditions { LatencyMilliseconds = LatencyMilliseconds });
+
+            Assert.AreEqual((int)LatencyMilliseconds, GetSteamsSimulatedLatencyMilliseconds(), "Steam did not take the simulated latency.");
+
+            Object.Destroy(serverObject);
+
+            yield return WaitUntil(() => GetSteamsSimulatedLatencyMilliseconds() == 0);
+            Assert.AreEqual(0, GetSteamsSimulatedLatencyMilliseconds(), "Steam still simulated latency after the transport shut down.");
+        }
+
+        /// <summary>
+        /// Returns the send latency Steam simulates for the whole process on the player's interface, in milliseconds.
+        /// </summary>
+        private static int GetSteamsSimulatedLatencyMilliseconds()
+        {
+            System.IntPtr valuePointer = Marshal.AllocHGlobal(sizeof(int));
+
+            try
+            {
+                ulong valueBytes = sizeof(int);
+                SteamNetworkingUtils.GetConfigValue(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketLag_Send, ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Global, System.IntPtr.Zero, out ESteamNetworkingConfigDataType _, valuePointer, ref valueBytes);
+
+                return Marshal.ReadInt32(valuePointer);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(valuePointer);
+            }
+        }
+
+        /// <summary>
+        /// Returns whether Steam's measured ping on a server's link to a client has reached a figure, sending a little on it so the
+        /// measurement keeps moving.
+        /// </summary>
+        private static bool IsPingAtLeast(SteamNetworkingTransport serverTransport, Connection connection, int pingMilliseconds)
+        {
+            connection.SendMessage(Channel.Reliable, new SteamProbeMessage { Value = 1 });
+
+            return serverTransport.TryGetLinkStatus(connection, out SteamLinkStatus linkStatus) && linkStatus.PingMilliseconds >= pingMilliseconds;
         }
 
         /// <summary>

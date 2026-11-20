@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using CodeBoost.Logging;
 using Nucleus.Connections;
 using Nucleus.Transports;
@@ -102,6 +103,15 @@ namespace Nucleus.Integrations.Unity.Transports
         public uint ConnectTimeoutMilliseconds { get; set; }
 
         /// <summary>
+        /// Whether a link addressed by Steam ID is carried over Valve's relay network only, so no peer learns another's IP address.
+        /// </summary>
+        /// <remarks>
+        /// Off lets Steam try a direct route between two players when each player's Steam settings allow it, which can lower ping. Read
+        /// when the server starts and when the client connects, and used only under <see cref="SteamAddressing.SteamId"/>.
+        /// </remarks>
+        public bool IsRelayOnlyEnabled { get; set; }
+
+        /// <summary>
         /// The default for <see cref="SendRateKilobytesPerSecond"/>, four mebibytes a second, well inside an ordinary home or mobile line.
         /// </summary>
         public const uint DefaultSendRateKilobytesPerSecond = 4_096;
@@ -111,6 +121,17 @@ namespace Nucleus.Integrations.Unity.Transports
         /// not have this one, as opposed to a peer that never answered.
         /// </summary>
         internal bool IsLastConnectRefused => ClientSocket is not null && ClientSocket.IsLastConnectRefused;
+
+        /// <summary>
+        /// The conditions Steam is asked to simulate, or <see langword="null"/> for none.
+        /// </summary>
+        private NetworkConditions? _networkConditions;
+
+        /// <summary>
+        /// Whether Steam's simulation holds conditions this transport set, so clearing them has something to undo.
+        /// </summary>
+        /// <remarks>Steam's simulation is process-wide, so a transport that never set any leaves whatever the game set alone.</remarks>
+        private bool _isNetworkSimulationApplied;
 
         /// <summary>
         /// Raises <see cref="SendFailed"/>, keeping a handler that throws from breaking the send it was raised from.
@@ -131,6 +152,67 @@ namespace Nucleus.Integrations.Unity.Transports
             }
         }
 
+        /// <summary>
+        /// Writes the conditions set through <see cref="SetNetworkConditions"/> into Steam's simulation on each interface that is up.
+        /// </summary>
+        /// <remarks>
+        /// Called again at each server and client start, since an interface can come up after the conditions were set. Does nothing while
+        /// no conditions were ever set, so a game's own simulation settings are kept.
+        /// </remarks>
+        internal void ApplyNetworkConditions()
+        {
+            if (_networkConditions is null && !_isNetworkSimulationApplied)
+                return;
+
+            NetworkConditions networkConditions = _networkConditions ?? default;
+            bool isClientApplied = SteamSockets.TryApplyNetworkConditions(isGameServer: false, networkConditions);
+            bool isGameServerApplied = SteamSockets.TryApplyNetworkConditions(isGameServer: true, networkConditions);
+
+            if (isClientApplied || isGameServerApplied)
+                _isNetworkSimulationApplied = _networkConditions is not null;
+        }
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// <para>
+        /// Simulated by Steam itself, through its fake lag, loss, reordering and duplication, and can change mid-session. Steam applies them
+        /// on send, so latency set on two peers adds to the round trip twice. Jitter averages half of
+        /// <see cref="NetworkConditions.JitterMilliseconds"/> and never exceeds it, a reordered packet is held back 100 ms, and
+        /// <see cref="NetworkConditions.Seed"/> is ignored.
+        /// </para>
+        /// <para>
+        /// Steam keeps these for the whole process, so they apply to every Steam connection it has open, this transport's or not. A host's
+        /// own client, paired in process, never crosses Steam and is unaffected; test from a remote client.
+        /// </para>
+        /// </remarks>
+        public override void SetNetworkConditions(NetworkConditions? networkConditions)
+        {
+            _networkConditions = networkConditions;
+
+            ApplyNetworkConditions();
+        }
+
+        /// <inheritdoc/>
+        public override NetworkConditions? GetNetworkConditions() => _networkConditions;
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Also clears Steam's simulated conditions when this transport set any, since Steam keeps them for the whole process, which in the
+        /// editor outlives the play session.
+        /// </remarks>
+        public override Task ShutdownAsync()
+        {
+            if (_isNetworkSimulationApplied)
+            {
+                SteamSockets.TryApplyNetworkConditions(isGameServer: false, networkConditions: default);
+                SteamSockets.TryApplyNetworkConditions(isGameServer: true, networkConditions: default);
+
+                _isNetworkSimulationApplied = false;
+            }
+
+            return base.ShutdownAsync();
+        }
+
         /// <inheritdoc/>
         /// <remarks>Steam traffic is always a real network path, even between two clients on one machine, so the security checks stay on.</remarks>
         public override bool IsLocalTransport() => false;
@@ -149,6 +231,29 @@ namespace Nucleus.Integrations.Unity.Transports
             Configuration.BindAddress = bindAddress;
 
             return true;
+        }
+
+        /// <summary>
+        /// Reads Steam's live status of the link carrying a Connection: its ping, quality, rates and what is queued on it.
+        /// </summary>
+        /// <param name="connection">A remote client on this peer's server, or, on a client, its link to the server.</param>
+        /// <param name="linkStatus">The status, when there is a Steam link to read.</param>
+        /// <returns>True when the Connection rides a Steam link. A host's own client, paired in process, has none.</returns>
+        /// <remarks>
+        /// Steamworks.NET allocates a little marshalling each call, so read it at a display's pace, such as a few times a second, rather
+        /// than every frame.
+        /// </remarks>
+        public bool TryGetLinkStatus(Connection connection, out SteamLinkStatus linkStatus)
+        {
+            if (ClientSocket is not null && ClientSocket.TryGetLinkStatus(connection, out linkStatus))
+                return true;
+
+            if (ServerSocket is not null && ServerSocket.TryGetLinkStatus(connection, out linkStatus))
+                return true;
+
+            linkStatus = default;
+
+            return false;
         }
     }
 }

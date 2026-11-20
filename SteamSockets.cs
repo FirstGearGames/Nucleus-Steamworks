@@ -1,4 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using CodeBoost.Logging;
+using Nucleus.Transports;
 using Steamworks;
 
 namespace Nucleus.Integrations.Unity.Transports
@@ -14,11 +18,70 @@ namespace Nucleus.Integrations.Unity.Transports
     internal static class SteamSockets
     {
         /// <summary>
+        /// How long Steam holds back a packet it reorders, in milliseconds.
+        /// </summary>
+        private const int ReorderDelayMilliseconds = 100;
+
+        /// <summary>
+        /// Returns whether the chosen interface is unavailable, never initialised or already shut down.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <returns>True when no call may be made on it, as Steamworks.NET throws on every one.</returns>
+        /// <remarks>
+        /// The game owns Steam, and Unity does not order one object's teardown against another's, so Steam can shut down while a socket is
+        /// still open. Its handles went with it, so a socket only forgets them then.
+        /// </remarks>
+        internal static bool IsShutDown(bool isGameServer)
+        {
+            try
+            {
+                if (isGameServer)
+                    InteropHelp.TestIfAvailableGameServer();
+                else
+                    InteropHelp.TestIfAvailableClient();
+
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return true;
+            }
+        }
+
+        /// <summary>
         /// Returns the Steam ID of whichever account the chosen interface signed in as.
         /// </summary>
         /// <param name="isGameServer">True for the game server interface.</param>
         /// <returns>The Steam ID.</returns>
         internal static ulong GetSteamId(bool isGameServer) => isGameServer ? SteamGameServer.GetSteamID().m_SteamID : SteamUser.GetSteamID().m_SteamID;
+
+        /// <summary>
+        /// Starts Steam fetching its network config and certificate on the chosen interface, ahead of the first link.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <remarks>Steam does this on its own at the first link otherwise; a call once it has started changes nothing.</remarks>
+        internal static void InitRelayNetworkAccess(bool isGameServer)
+        {
+            if (isGameServer)
+                SteamGameServerNetworkingUtils.InitRelayNetworkAccess();
+            else
+                SteamNetworkingUtils.InitRelayNetworkAccess();
+        }
+
+        /// <summary>
+        /// Returns whether the player's interface has settled its network config, having fetched it or given up on it.
+        /// </summary>
+        /// <returns>True once a dial would no longer fail for want of Steam's certificate.</returns>
+        /// <remarks>
+        /// A dial made straight after Steam starts, before the config has arrived, closes with <c>k_ESteamNetConnectionEnd_Local_BadCert</c>
+        /// rather than waiting for it. A config Steam failed to fetch also counts as settled, so the dial goes ahead and fails on its own.
+        /// </remarks>
+        internal static bool IsNetworkConfigSettled()
+        {
+            SteamNetworkingUtils.GetRelayNetworkStatus(out SteamRelayNetworkStatus_t relayNetworkStatus);
+
+            return relayNetworkStatus.m_eAvailNetworkConfig is ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_Current or ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_Previously or ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_Failed or ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_CannotTry;
+        }
 
         /// <summary>
         /// Opens a listen socket that peers reach by this account's Steam identity.
@@ -36,26 +99,42 @@ namespace Nucleus.Integrations.Unity.Transports
         internal static HSteamListenSocket CreateListenSocketIP(bool isGameServer, ref SteamNetworkingIPAddr localAddress, SteamNetworkingConfigValue_t[] options) => isGameServer ? SteamGameServerNetworkingSockets.CreateListenSocketIP(ref localAddress, GetOptionCount(options), options) : SteamNetworkingSockets.CreateListenSocketIP(ref localAddress, GetOptionCount(options), options);
 
         /// <summary>
-        /// Builds the settings a socket's connections are opened with: Steam's send rate held at the one given.
+        /// Builds the settings a socket's connections are opened with: Steam's send rate held at the transport's, its timeouts, and its
+        /// relay only setting.
         /// </summary>
-        /// <param name="sendRateKilobytesPerSecond">The send rate, in kilobytes of 1,024 bytes a second, or zero for Steam's own.</param>
-        /// <returns>The settings, or <see langword="null"/> to leave Steam's own in place.</returns>
+        /// <param name="steamNetworkingTransport">The transport whose settings are read.</param>
+        /// <returns>The settings.</returns>
         /// <remarks>
         /// The rate is set as both Steam's lowest and highest, because Steam sends at its lowest unless something raises it, and nothing
-        /// does, so a higher ceiling alone changes nothing. Built once per socket, when it opens.
+        /// does, so a higher ceiling alone changes nothing. A timeout of zero, and a rate of zero, keep Steam's own. Built once per socket,
+        /// when it opens.
         /// </remarks>
-        internal static SteamNetworkingConfigValue_t[] CreateConnectionOptions(uint sendRateKilobytesPerSecond)
+        internal static SteamNetworkingConfigValue_t[] CreateConnectionOptions(SteamNetworkingTransport steamNetworkingTransport)
         {
-            if (sendRateKilobytesPerSecond == 0)
-                return null;
+            Configuration configuration = steamNetworkingTransport.Configuration;
+            uint sendRateKilobytesPerSecond = steamNetworkingTransport.SendRateKilobytesPerSecond;
 
-            int sendRateBytesPerSecond = (int)Math.Min(sendRateKilobytesPerSecond * 1_024UL, int.MaxValue);
+            List<SteamNetworkingConfigValue_t> options = new();
 
-            return new[]
+            if (sendRateKilobytesPerSecond > 0)
             {
-                CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin, sendRateBytesPerSecond),
-                CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, sendRateBytesPerSecond),
-            };
+                int sendRateBytesPerSecond = (int)Math.Min(sendRateKilobytesPerSecond * 1_024UL, int.MaxValue);
+
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin, sendRateBytesPerSecond));
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, sendRateBytesPerSecond));
+            }
+
+            if (configuration.ConnectingTimeoutSeconds > 0)
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutInitial, configuration.ConnectingTimeoutSeconds * 1_000));
+
+            if (configuration.ConnectedTimeoutSeconds > 0)
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutConnected, configuration.ConnectedTimeoutSeconds * 1_000));
+
+            // Only a Steam ID link tries a direct route; an IP address is dialled as given.
+            if (steamNetworkingTransport.IsRelayOnlyEnabled && steamNetworkingTransport.Addressing is SteamAddressing.SteamId)
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable, Constants.k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Disable));
+
+            return options.ToArray();
         }
 
         /// <summary>
@@ -177,9 +256,76 @@ namespace Nucleus.Integrations.Unity.Transports
         internal static int ReceiveMessagesOnConnection(bool isGameServer, HSteamNetConnection connection, IntPtr[] messages) => isGameServer ? SteamGameServerNetworkingSockets.ReceiveMessagesOnConnection(connection, messages, messages.Length) : SteamNetworkingSockets.ReceiveMessagesOnConnection(connection, messages, messages.Length);
 
         /// <summary>
+        /// Reads Steam's live status of one connection.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="connection">The connection, or invalid for none.</param>
+        /// <param name="linkStatus">The status, when Steam reported one.</param>
+        /// <returns>True when Steam reported the connection's status; false for an invalid connection, or once Steam has shut down.</returns>
+        internal static bool TryGetLinkStatus(bool isGameServer, HSteamNetConnection connection, out SteamLinkStatus linkStatus)
+        {
+            linkStatus = default;
+
+            if (connection == HSteamNetConnection.Invalid || IsShutDown(isGameServer))
+                return false;
+
+            SteamNetConnectionRealTimeStatus_t realTimeStatus = default;
+            SteamNetConnectionRealTimeLaneStatus_t laneStatus = default;
+
+            EResult result = isGameServer
+                ? SteamGameServerNetworkingSockets.GetConnectionRealTimeStatus(connection, ref realTimeStatus, nLanes: 0, ref laneStatus)
+                : SteamNetworkingSockets.GetConnectionRealTimeStatus(connection, ref realTimeStatus, nLanes: 0, ref laneStatus);
+
+            if (result is not EResult.k_EResultOK)
+                return false;
+
+            linkStatus = new(in realTimeStatus);
+
+            return true;
+        }
+
+        /// <summary>
         /// Creates the status callback for the chosen interface, which Steam raises from inside its own callback pump.
         /// </summary>
         internal static Callback<SteamNetConnectionStatusChangedCallback_t> CreateStatusCallback(bool isGameServer, Callback<SteamNetConnectionStatusChangedCallback_t>.DispatchDelegate handler) => isGameServer ? Callback<SteamNetConnectionStatusChangedCallback_t>.CreateGameServer(handler) : Callback<SteamNetConnectionStatusChangedCallback_t>.Create(handler);
+
+        /// <summary>
+        /// Writes simulated network conditions into the chosen interface's process-wide fake lag, loss, reordering and duplication.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="networkConditions">The conditions; the default value simulates nothing.</param>
+        /// <returns>True when the interface was up and took them; false before Steam starts or once it has shut down.</returns>
+        /// <remarks>
+        /// Steam simulates on send only, so latency set on both peers adds to the round trip twice. Jitter follows Steam's own spread,
+        /// averaging half of <see cref="NetworkConditions.JitterMilliseconds"/> and never above it, and a reordered packet is held back
+        /// <see cref="ReorderDelayMilliseconds"/>. <see cref="NetworkConditions.Seed"/> is ignored, since Steam draws its own choices.
+        /// </remarks>
+        internal static bool TryApplyNetworkConditions(bool isGameServer, NetworkConditions networkConditions)
+        {
+            if (IsShutDown(isGameServer))
+                return false;
+
+            float jitterMilliseconds = networkConditions.JitterMilliseconds;
+            IntPtr valuePointer = Marshal.AllocHGlobal(sizeof(int));
+
+            try
+            {
+                SetGlobalInt32(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketLag_Send, (int)Math.Min(networkConditions.LatencyMilliseconds, int.MaxValue));
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketJitter_Send_Avg, jitterMilliseconds / 2f);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketJitter_Send_Max, jitterMilliseconds);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketJitter_Send_Pct, jitterMilliseconds > 0f ? 100f : 0f);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketLoss_Send, networkConditions.PacketLossChance * 100f);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketReorder_Send, networkConditions.OutOfOrderChance * 100f);
+                SetGlobalInt32(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketReorder_Time, ReorderDelayMilliseconds);
+                SetGlobalFloat(isGameServer, valuePointer, ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketDup_Send, networkConditions.DuplicateChance * 100f);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(valuePointer);
+            }
+
+            return true;
+        }
 
         /// <summary>
         /// Returns how many settings a list holds, zero for none.
@@ -199,6 +345,49 @@ namespace Nucleus.Integrations.Unity.Transports
             option.m_val.m_int32 = value;
 
             return option;
+        }
+
+        /// <summary>
+        /// Sets one process-wide whole-number setting on the chosen interface.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="valuePointer">Four bytes of native memory the value is written through.</param>
+        /// <param name="configValue">The setting.</param>
+        /// <param name="value">Its value.</param>
+        private static void SetGlobalInt32(bool isGameServer, IntPtr valuePointer, ESteamNetworkingConfigValue configValue, int value)
+        {
+            Marshal.WriteInt32(valuePointer, value);
+            SetGlobal(isGameServer, valuePointer, configValue, ESteamNetworkingConfigDataType.k_ESteamNetworkingConfig_Int32);
+        }
+
+        /// <summary>
+        /// Sets one process-wide decimal setting on the chosen interface.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="valuePointer">Four bytes of native memory the value is written through.</param>
+        /// <param name="configValue">The setting.</param>
+        /// <param name="value">Its value.</param>
+        private static void SetGlobalFloat(bool isGameServer, IntPtr valuePointer, ESteamNetworkingConfigValue configValue, float value)
+        {
+            Marshal.WriteInt32(valuePointer, BitConverter.SingleToInt32Bits(value));
+            SetGlobal(isGameServer, valuePointer, configValue, ESteamNetworkingConfigDataType.k_ESteamNetworkingConfig_Float);
+        }
+
+        /// <summary>
+        /// Hands Steam one process-wide setting already written to native memory.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="valuePointer">The native memory holding the value.</param>
+        /// <param name="configValue">The setting.</param>
+        /// <param name="dataType">The value's type.</param>
+        private static void SetGlobal(bool isGameServer, IntPtr valuePointer, ESteamNetworkingConfigValue configValue, ESteamNetworkingConfigDataType dataType)
+        {
+            bool isAccepted = isGameServer
+                ? SteamGameServerNetworkingUtils.SetConfigValue(configValue, ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Global, IntPtr.Zero, dataType, valuePointer)
+                : SteamNetworkingUtils.SetConfigValue(configValue, ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Global, IntPtr.Zero, dataType, valuePointer);
+
+            if (!isAccepted)
+                Logger<SteamNetworkingTransport>.LogWarning($"Steam refused the setting [{configValue}], so it is not simulated.");
         }
     }
 }

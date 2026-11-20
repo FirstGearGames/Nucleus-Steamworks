@@ -119,11 +119,34 @@ namespace Nucleus.Integrations.Unity.Transports
         [SerializeField]
         [Tooltip("Rate Steam sends at on each connection, in kilobytes a second. Steam's own is 256, slower than nearly any player's line. 0 keeps Steam's own.")]
         private uint _sendRateKilobytesPerSecond = SteamNetworkingTransport.DefaultSendRateKilobytesPerSecond;
+        /// <summary>
+        /// The seconds a link may spend connecting before Steam gives up on it, on the client and on the server.
+        /// </summary>
+        [SerializeField]
+        [Tooltip("Seconds a link may spend connecting before Steam gives up on it. 0 keeps Steam's own, 10.")]
+        private ushort _connectingTimeoutSeconds = SteamTimeoutSeconds;
+        /// <summary>
+        /// The seconds a connected peer waits without hearing from the other side before Steam drops the link.
+        /// </summary>
+        [SerializeField]
+        [Tooltip("Seconds a connected peer waits without hearing from the other side before Steam drops the link. 0 keeps Steam's own, 10.")]
+        private ushort _connectedTimeoutSeconds = SteamTimeoutSeconds;
+        /// <summary>
+        /// Whether a link addressed by Steam ID is carried over Valve's relay network only.
+        /// </summary>
+        [SerializeField]
+        [Tooltip("Carry Steam ID links over Valve's relay only, so no player learns another's IP address. Off lets Steam connect players directly when their Steam settings allow it, which can lower ping.")]
+        private bool _isRelayOnlyEnabled;
 
         /// <summary>
         /// The transport this component configured, or <see langword="null"/> before it has.
         /// </summary>
         private SteamNetworkingTransport _steamNetworkingTransport;
+
+        /// <summary>
+        /// Steam's own connecting and connected timeouts, in seconds, which the component's defaults match.
+        /// </summary>
+        private const ushort SteamTimeoutSeconds = 10;
 
         /// <inheritdoc/>
         public override async Task<Transport> AddToAsync(CoreManager coreManager)
@@ -139,6 +162,9 @@ namespace Nucleus.Integrations.Unity.Transports
             _steamNetworkingTransport.SetBindAddress(_bindAddress);
             _steamNetworkingTransport.Configuration.MaximumTransmissionUnit = _maximumTransmissionUnit;
             _steamNetworkingTransport.SendRateKilobytesPerSecond = _sendRateKilobytesPerSecond;
+            _steamNetworkingTransport.Configuration.ConnectingTimeoutSeconds = _connectingTimeoutSeconds;
+            _steamNetworkingTransport.Configuration.ConnectedTimeoutSeconds = _connectedTimeoutSeconds;
+            _steamNetworkingTransport.IsRelayOnlyEnabled = _isRelayOnlyEnabled;
 
             return _steamNetworkingTransport;
         }

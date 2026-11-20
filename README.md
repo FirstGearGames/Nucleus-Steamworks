@@ -30,6 +30,7 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 |---|---|---|
 | Addressing | Steam ID | **Steam ID** goes through Valve's relay. **IP Address** listens on a port and connects to an address. |
 | Remote Steam Id | 0 | Who a client connects to by Steam ID. 0, or your own ID, joins your own server. |
+| Is Relay Only Enabled | off | Carry Steam ID links over Valve's relay only, so no player learns another's IP address. Off lets Steam connect two players directly when their Steam settings allow it, which can lower ping. |
 | Remote Address | empty | Who a client connects to by IP, optionally with a port such as `203.0.113.7:7777`. Host names are not looked up. |
 | Port | 7777 | The port the server listens on by IP, and the one a client uses when its address names none. |
 | Bind Address | empty | The local address the server listens on by IP. Empty listens on every interface. |
@@ -37,8 +38,10 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 | Maximum Connections | 0 | The most clients the server accepts at once. 0 accepts any number. |
 | Maximum Transmission Unit | 1200 | The largest datagram built before it is split. |
 | Send Rate Kilobytes Per Second | 4096 | The rate Steam sends at on each connection. Steam's own is 256, slower than nearly any player's line, so a large join queues behind it. 0 keeps Steam's own. |
+| Connecting Timeout Seconds | 10 | How long a link may spend connecting before Steam gives up on it, on the client and on the server. 0 keeps Steam's own, also 10. |
+| Connected Timeout Seconds | 10 | How long a connected peer waits without hearing from the other side before Steam drops the link. 0 keeps Steam's own, also 10. |
 
-`RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start.
+`RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start. The two timeouts are the transport's `Configuration.ConnectingTimeoutSeconds` and `Configuration.ConnectedTimeoutSeconds`, read when the server starts and when the client connects; a transport set up from code rather than by this component starts at Nucleus's own defaults, 10 and 15.
 
 ## Host migration (Nucleus Pro)
 
@@ -68,13 +71,15 @@ Host migration moved off the **Steam Transport** onto its own **Steam Host Migra
 
 - **Connecting to your own Steam ID over the relay fails.** Steam does not route a player back to itself, so testing by Steam ID needs two Steam accounts on two machines. With one account, test by **IP Address** instead: several game instances on one machine can each host on their own port.
 - **A host's own client never appears in Steam.** It is paired with the server inside the process, so its traffic never leaves the machine.
-- **A client that cannot reach its server waits for Steam to give up.** That is Steam's own connect timeout unless `SteamNetworkingTransport.ConnectTimeoutMilliseconds` sets a shorter one.
+- **A client that cannot reach its server waits for Steam to give up.** That is **Connecting Timeout Seconds**, unless `SteamNetworkingTransport.ConnectTimeoutMilliseconds` sets a shorter wait; whichever ends first stops the connect.
 - **The world stays put when the link drops** while host migration is on. That is deliberate: it is what the next host carries on from.
+- **"Steam was shut down while the server was running" or "while the client was connected".** Your game shut Steam down before stopping the transport. Steam closed every link as it went, so the transport stops and forgets them rather than throwing; stop the transport first to close them cleanly.
 
 ## Troubleshooting
 
-- **Nothing in this folder compiles, and there are no errors.** Steamworks.NET is not installed as a package, so `NUCLEUS_STEAMWORKS` is not defined. Install it, or add the define.
+- **Nothing in this folder compiles, and there are no errors.** Steamworks.NET is not installed as a package, so `NUCLEUS_STEAMWORKS` is not defined. Install it, or add the define. `DISABLESTEAMWORKS`, Steamworks.NET's own switch, compiles these out too.
 - **"Steam refused to open a listen socket" or "Steam refused to connect".** Steam is not initialised yet. Make sure whatever starts Steam runs before the server or client starts.
+- **"Could not connect: Steam's network config did not arrive in time".** A client waits for Steam to fetch its network config before it dials, since a dial made before it arrives fails at once, and `ConnectTimeoutMilliseconds` ran out first. Check that Steam is online, or give it longer. With no `ConnectTimeoutMilliseconds` the wait lasts at most **Connecting Timeout Seconds**, then the client dials anyway.
 - **A client connects by IP to nothing.** Check that the address is an IP address rather than a host name, and that the server's port is open to it.
 - **Hosting a migratable session fails by IP with an address length error.** The address and port together must fit in 64 characters. Use an IPv4 address in **Hosted Address**.
 
@@ -83,6 +88,10 @@ Host migration moved off the **Steam Transport** onto its own **Steam Host Migra
 `Diagnostics/SteamLinkProbe` checks a Steam link both ways with nothing of your game in the way. Put it on the GameObject with the `UnityCoreManager`, `UnityTransportManager` and `SteamTransport`, set **Role** to **Host** on one machine and to **Client** with the host's Steam ID on the other, and enter play mode on both. The host logs its own Steam ID first.
 
 Each second the client sends a numbered probe to the server on both channels, and the server echoes each one back. The host logs how many probes arrived from each client and how many bytes arrived; the client logs how many echoes came back. Both log every send Steam refused, with Steam's reason. It starts Steam itself, so turn off **Is Steam Started Here** if your game already does.
+
+From code, `SteamNetworkingTransport.TryGetLinkStatus(connection, out SteamLinkStatus linkStatus)` reads Steam's own view of a link: ping, quality each way, send and receive rates, Steam's send rate, and the reliable and unreliable bytes still queued. On a server pass a remote client's Connection; on a client pass its own or its server Connection. It returns false for a host's own client, which never crosses Steam. Each read allocates a little in Steamworks.NET, so read it a few times a second rather than every frame.
+
+`SetNetworkConditions` on the transport, or the network conditions on the `UnityTransportManager`, has Steam simulate latency, jitter, loss, reordering and duplication on its own sends. Steam keeps these for the whole process, so they apply to every Steam connection in it, and latency set where both peers share a process counts twice in the round trip. A host's own client never crosses Steam, so test from a remote client. A transport that was never given conditions leaves Steam's simulation settings as the game set them, and one that was clears them when it shuts down.
 
 ## Tests
 
