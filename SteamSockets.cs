@@ -99,19 +99,17 @@ namespace Nucleus.Integrations.Unity.Transports
         internal static HSteamListenSocket CreateListenSocketIP(bool isGameServer, ref SteamNetworkingIPAddr localAddress, SteamNetworkingConfigValue_t[] options) => isGameServer ? SteamGameServerNetworkingSockets.CreateListenSocketIP(ref localAddress, GetOptionCount(options), options) : SteamNetworkingSockets.CreateListenSocketIP(ref localAddress, GetOptionCount(options), options);
 
         /// <summary>
-        /// Builds the settings a socket's connections are opened with: Steam's send rate held at the transport's, its timeouts, and its
-        /// relay only setting.
+        /// Builds the settings a socket's connections are opened with: Steam's send rate held at the transport's, and its relay only
+        /// setting. Steam's own timeouts are kept.
         /// </summary>
         /// <param name="steamNetworkingTransport">The transport whose settings are read.</param>
         /// <returns>The settings.</returns>
         /// <remarks>
         /// The rate is set as both Steam's lowest and highest, because Steam sends at its lowest unless something raises it, and nothing
-        /// does, so a higher ceiling alone changes nothing. A timeout of zero, and a rate of zero, keep Steam's own. Built once per socket,
-        /// when it opens.
+        /// does, so a higher ceiling alone changes nothing. A rate of zero keeps Steam's own. Built once per socket, when it opens.
         /// </remarks>
         internal static SteamNetworkingConfigValue_t[] CreateConnectionOptions(SteamNetworkingTransport steamNetworkingTransport)
         {
-            Configuration configuration = steamNetworkingTransport.Configuration;
             uint sendRateKilobytesPerSecond = steamNetworkingTransport.SendRateKilobytesPerSecond;
 
             List<SteamNetworkingConfigValue_t> options = new();
@@ -123,12 +121,6 @@ namespace Nucleus.Integrations.Unity.Transports
                 options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin, sendRateBytesPerSecond));
                 options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, sendRateBytesPerSecond));
             }
-
-            if (configuration.ConnectingTimeoutSeconds > 0)
-                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutInitial, configuration.ConnectingTimeoutSeconds * 1_000));
-
-            if (configuration.ConnectedTimeoutSeconds > 0)
-                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutConnected, configuration.ConnectedTimeoutSeconds * 1_000));
 
             // Only a Steam ID link tries a direct route; an IP address is dialled as given.
             if (steamNetworkingTransport.IsRelayOnlyEnabled && steamNetworkingTransport.Addressing is SteamAddressing.SteamId)

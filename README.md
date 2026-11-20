@@ -38,10 +38,8 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 | Maximum Connections | 0 | The most clients the server accepts at once. 0 accepts any number. |
 | Maximum Transmission Unit | 1200 | The largest datagram built before it is split. |
 | Send Rate Kilobytes Per Second | 4096 | The rate Steam sends at on each connection. Steam's own is 256, slower than nearly any player's line, so a large join queues behind it. 0 keeps Steam's own. |
-| Connecting Timeout Seconds | 10 | How long a link may spend connecting before Steam gives up on it, on the client and on the server. 0 keeps Steam's own, also 10. |
-| Connected Timeout Seconds | 10 | How long a connected peer waits without hearing from the other side before Steam drops the link. 0 keeps Steam's own, also 10. |
 
-`RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start. The two timeouts are the transport's `Configuration.ConnectingTimeoutSeconds` and `Configuration.ConnectedTimeoutSeconds`, read when the server starts and when the client connects; a transport set up from code rather than by this component starts at Nucleus's own defaults, 10 and 15.
+`RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start.
 
 ## Host migration (Nucleus Pro)
 
@@ -71,7 +69,7 @@ Host migration moved off the **Steam Transport** onto its own **Steam Host Migra
 
 - **Connecting to your own Steam ID over the relay fails.** Steam does not route a player back to itself, so testing by Steam ID needs two Steam accounts on two machines. With one account, test by **IP Address** instead: several game instances on one machine can each host on their own port.
 - **A host's own client never appears in Steam.** It is paired with the server inside the process, so its traffic never leaves the machine.
-- **A client that cannot reach its server waits for Steam to give up.** That is **Connecting Timeout Seconds**, unless `SteamNetworkingTransport.ConnectTimeoutMilliseconds` sets a shorter wait; whichever ends first stops the connect.
+- **A client that cannot reach its server waits for Steam to give up.** That is Steam's own connect timeout, 10 seconds, unless `SteamNetworkingTransport.ConnectTimeoutMilliseconds` sets a shorter one.
 - **The world stays put when the link drops** while host migration is on. That is deliberate: it is what the next host carries on from.
 - **"Steam was shut down while the server was running" or "while the client was connected".** Your game shut Steam down before stopping the transport. Steam closed every link as it went, so the transport stops and forgets them rather than throwing; stop the transport first to close them cleanly.
 
@@ -79,7 +77,7 @@ Host migration moved off the **Steam Transport** onto its own **Steam Host Migra
 
 - **Nothing in this folder compiles, and there are no errors.** Steamworks.NET is not installed as a package, so `NUCLEUS_STEAMWORKS` is not defined. Install it, or add the define. `DISABLESTEAMWORKS`, Steamworks.NET's own switch, compiles these out too.
 - **"Steam refused to open a listen socket" or "Steam refused to connect".** Steam is not initialised yet. Make sure whatever starts Steam runs before the server or client starts.
-- **"Could not connect: Steam's network config did not arrive in time".** A client waits for Steam to fetch its network config before it dials, since a dial made before it arrives fails at once, and `ConnectTimeoutMilliseconds` ran out first. Check that Steam is online, or give it longer. With no `ConnectTimeoutMilliseconds` the wait lasts at most **Connecting Timeout Seconds**, then the client dials anyway.
+- **"Could not connect: Steam's network config did not arrive in time".** A client waits for Steam to fetch its network config before it dials, since a dial made before it arrives fails at once, and `ConnectTimeoutMilliseconds` ran out first. Check that Steam is online, or give it longer. With no `ConnectTimeoutMilliseconds` the wait lasts at most Steam's own connect timeout, 10 seconds, then the client dials anyway.
 - **A client connects by IP to nothing.** Check that the address is an IP address rather than a host name, and that the server's port is open to it.
 - **Hosting a migratable session fails by IP with an address length error.** The address and port together must fit in 64 characters. Use an IPv4 address in **Hosted Address**.
 

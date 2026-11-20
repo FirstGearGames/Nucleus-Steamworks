@@ -169,8 +169,7 @@ namespace Nucleus.Integrations.Unity.Transports
             string remoteTarget = isIpAddressing ? remoteAddress : remoteSteamId.ToString();
             long nowTimestamp = Stopwatch.GetTimestamp();
             long deadlineTimestamp = connectTimeoutMilliseconds == 0 ? long.MaxValue : nowTimestamp + connectTimeoutMilliseconds * Stopwatch.Frequency / 1000;
-            uint connectingTimeoutSeconds = steamNetworkingTransport.Configuration.ConnectingTimeoutSeconds;
-            long networkConfigDeadlineTimestamp = Math.Min(deadlineTimestamp, nowTimestamp + (connectingTimeoutSeconds > 0 ? connectingTimeoutSeconds : SteamConnectingTimeoutSeconds) * Stopwatch.Frequency);
+            long networkConfigDeadlineTimestamp = Math.Min(deadlineTimestamp, nowTimestamp + SteamConnectingTimeoutSeconds * Stopwatch.Frequency);
             bool isShutDown = false;
 
             SteamSockets.InitRelayNetworkAccess(isGameServer: false);

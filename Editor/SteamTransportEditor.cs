@@ -51,8 +51,6 @@ namespace Nucleus.Integrations.Unity.Editor
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_maximumConnections"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_maximumTransmissionUnit"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_sendRateKilobytesPerSecond"));
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("_connectingTimeoutSeconds"));
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("_connectedTimeoutSeconds"));
 
             serializedObject.ApplyModifiedProperties();
         }
