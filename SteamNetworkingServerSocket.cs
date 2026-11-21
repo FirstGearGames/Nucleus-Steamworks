@@ -1,3 +1,5 @@
+// Matches Steamworks.NET's own switch, so this compiles out wherever Steamworks.NET does, not only where it is missing.
+#if NUCLEUS_STEAMWORKS && !DISABLESTEAMWORKS && (UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX || UNITY_STANDALONE_OSX || UNITY_ANDROID || STEAMWORKS_WIN || STEAMWORKS_LIN_OSX)
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -65,6 +67,11 @@ namespace Nucleus.Integrations.Unity.Transports
         private readonly IntPtr[] _messages = new IntPtr[SteamMessages.MaximumMessagesPerReceive];
 
         /// <summary>
+        /// The arrays each send and each accepted connection's lanes are handed to Steam in.
+        /// </summary>
+        private readonly SteamSendBuffers _sendBuffers = new();
+
+        /// <summary>
         /// The socket peers connect to, or invalid while the server is stopped.
         /// </summary>
         private HSteamListenSocket _listenSocket = HSteamListenSocket.Invalid;
@@ -80,6 +87,11 @@ namespace Nucleus.Integrations.Unity.Transports
         private Callback<SteamNetConnectionStatusChangedCallback_t> _connectionStatusChangedCallback;
 
         /// <summary>
+        /// Steam's answer to a fake IP request, held while a server addressed by fake IP runs.
+        /// </summary>
+        private Callback<SteamNetworkingFakeIPResult_t> _fakeIpResultCallback;
+
+        /// <summary>
         /// This socket's entry for its own transport's client half while that half is paired in process, or null.
         /// </summary>
         /// <remarks>
@@ -92,6 +104,23 @@ namespace Nucleus.Integrations.Unity.Transports
         /// The socket id rented for <see cref="_pairedClientConnection"/>, held so it goes back to the pool when the pairing ends.
         /// </summary>
         private uint _pairedClientIdBySocket = Connection.UnsetId;
+
+        /// <summary>
+        /// Why a client was closed for a full server, as its own close log reads.
+        /// </summary>
+        private const string FullReason = "The server is full.";
+        /// <summary>
+        /// Why a client was refused, as its own close log reads.
+        /// </summary>
+        private const string RefusedReason = "Refused by the server.";
+        /// <summary>
+        /// Why a client was dropped by the server, as its own close log reads.
+        /// </summary>
+        private const string DisconnectedReason = "Disconnected by the server.";
+        /// <summary>
+        /// Why a client was dropped by the server stopping, as its own close log reads.
+        /// </summary>
+        private const string StoppedReason = "The server stopped.";
 
         /// <summary>
         /// Creates a new instance.
@@ -114,7 +143,7 @@ namespace Nucleus.Integrations.Unity.Transports
         protected override void SweepIdPools() => _idBySocketPool.Sweep();
 
         /// <summary>
-        /// Opens a listen socket on this peer's Steam identity.
+        /// Opens a listen socket on this peer's Steam identity, IP address or fake IP address, as the transport is addressed.
         /// </summary>
         /// <returns>The result of the state change.</returns>
         protected override Task<ConnectionStateChangeResult> ConnectAsync()
@@ -128,27 +157,43 @@ namespace Nucleus.Integrations.Unity.Transports
             SteamSockets.InitRelayNetworkAccess(IsGameServer);
             steamNetworkingTransport.ApplyNetworkConditions();
 
-            if (steamNetworkingTransport.Addressing is SteamAddressing.IpAddress)
-            {
-                Configuration configuration = steamNetworkingTransport.Configuration;
+            SteamNetworkingConfigValue_t[] listenOptions = SteamSockets.CreateConnectionOptions(steamNetworkingTransport, isServer: true);
 
-                if (!SteamSockets.TryParseIpAddress(configuration.BindAddress, configuration.Port, out SteamNetworkingIPAddr bindAddress))
+            switch (steamNetworkingTransport.Addressing)
+            {
+                case SteamAddressing.IpAddress:
                 {
-                    Logger<SteamNetworkingServerSocket>.LogError($"Bind address [{configuration.BindAddress}] is not an IP address. Leave it empty to listen on every interface.");
+                    Configuration configuration = steamNetworkingTransport.Configuration;
 
-                    return GetResultTask(ConnectionStateChangeResult.UnspecifiedError);
+                    if (!SteamSockets.TryParseIpAddress(configuration.BindAddress, configuration.Port, out SteamNetworkingIPAddr bindAddress))
+                    {
+                        Logger<SteamNetworkingServerSocket>.LogError($"Bind address [{configuration.BindAddress}] is not an IP address. Leave it empty to listen on every interface.");
+
+                        return GetResultTask(ConnectionStateChangeResult.UnspecifiedError);
+                    }
+
+                    _listenSocket = SteamSockets.CreateListenSocketIP(IsGameServer, ref bindAddress, listenOptions);
+
+                    break;
                 }
+                case SteamAddressing.FakeIp:
+                    _fakeIpResultCallback = SteamSockets.CreateFakeIpResultCallback(IsGameServer, OnFakeIpResult);
+                    RequestFakeIp();
 
-                _listenSocket = SteamSockets.CreateListenSocketIP(IsGameServer, ref bindAddress, SteamSockets.CreateConnectionOptions(steamNetworkingTransport));
-            }
-            else
-            {
-                _listenSocket = SteamSockets.CreateListenSocketP2P(IsGameServer, SteamSockets.CreateConnectionOptions(steamNetworkingTransport));
+                    _listenSocket = SteamSockets.CreateListenSocketP2PFakeIP(IsGameServer, listenOptions);
+
+                    break;
+                default:
+                    _listenSocket = SteamSockets.CreateListenSocketP2P(IsGameServer, listenOptions);
+
+                    break;
             }
 
             if (_listenSocket == HSteamListenSocket.Invalid)
             {
                 Logger<SteamNetworkingServerSocket>.LogError("Steam refused to open a listen socket. Make sure Steam is initialised before the server starts.");
+
+                ReleaseSteam();
 
                 return GetResultTask(ConnectionStateChangeResult.UnspecifiedError);
             }
@@ -210,7 +255,7 @@ namespace Nucleus.Integrations.Unity.Transports
                 return;
             }
 
-            EResult sendResult = SteamMessages.Send(IsGameServer, steamConnection, outgoingPacket.Channel, outgoingPacket.Payload);
+            EResult sendResult = SteamMessages.Send(IsGameServer, steamConnection, outgoingPacket.Channel, outgoingPacket.Payload, _sendBuffers);
 
             if (sendResult is EResult.k_EResultOK)
             {
@@ -435,7 +480,7 @@ namespace Nucleus.Integrations.Unity.Transports
             {
                 Logger<SteamNetworkingServerSocket>.LogWarning($"Steam client [{remoteSteamId}] was refused: the server is full or has no id to give it.");
 
-                SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled: false);
+                SteamSockets.CloseConnection(IsGameServer, steamConnection, FullReason, isLingerEnabled: false);
 
                 return false;
             }
@@ -496,9 +541,48 @@ namespace Nucleus.Integrations.Unity.Transports
             ForgetAndQueueDeparture(steamConnection, connection);
 
             if (!SteamSockets.IsShutDown(IsGameServer))
-                SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled);
+                SteamSockets.CloseConnection(IsGameServer, steamConnection, DisconnectedReason, isLingerEnabled);
 
             return GetResultTask(ConnectionStateChangeResult.Success);
+        }
+
+        /// <summary>
+        /// Asks Steam for a fake IP address, or adopts the one this process was already granted.
+        /// </summary>
+        /// <remarks>
+        /// Steam grants one fake address per interface for the life of the process and refuses a second request, so a restarted server
+        /// reads the earlier grant instead. A new grant arrives later through <see cref="OnFakeIpResult"/>.
+        /// </remarks>
+        private void RequestFakeIp()
+        {
+            if (SteamSockets.BeginAsyncRequestFakeIP(IsGameServer))
+                return;
+
+            SteamSockets.GetFakeIP(IsGameServer, out SteamNetworkingFakeIPResult_t fakeIpResult);
+
+            // A request the game made itself, as a game server must before it logs on, may still be on its way; its grant comes through the callback.
+            if (fakeIpResult.m_eResult is not EResult.k_EResultBusy)
+                OnFakeIpResult(fakeIpResult);
+        }
+
+        /// <summary>
+        /// Records and logs the fake IP address Steam granted this server. Raised from inside Steam's callback pump on the main thread.
+        /// </summary>
+        /// <param name="fakeIpResult">Steam's answer.</param>
+        private void OnFakeIpResult(SteamNetworkingFakeIPResult_t fakeIpResult)
+        {
+            SteamNetworkingTransport steamNetworkingTransport = (SteamNetworkingTransport)Transport;
+
+            if (fakeIpResult.m_eResult is not EResult.k_EResultOK)
+            {
+                Logger<SteamNetworkingServerSocket>.LogError($"Steam did not grant this server a fake IP address: [{fakeIpResult.m_eResult}], so clients cannot reach it. A game server asks for one between GameServer.Init and logging on.");
+
+                return;
+            }
+
+            steamNetworkingTransport.ServerFakeAddress = SteamSockets.FormatFakeAddress(in fakeIpResult);
+
+            Logger<SteamNetworkingServerSocket>.LogInformation($"Steam granted this server the fake IP address [{steamNetworkingTransport.ServerFakeAddress}].");
         }
 
         /// <summary>
@@ -518,19 +602,30 @@ namespace Nucleus.Integrations.Unity.Transports
 
                     if (IsConnectionCapReached())
                     {
-                        SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled: false);
+                        SteamSockets.CloseConnection(IsGameServer, steamConnection, FullReason, isLingerEnabled: false);
+
+                        return;
+                    }
+
+                    if (!((SteamNetworkingTransport)Transport).IsConnectingClientAllowed(statusChanged.m_info.m_identityRemote.GetSteamID64()))
+                    {
+                        SteamSockets.CloseConnection(IsGameServer, steamConnection, RefusedReason, isLingerEnabled: false);
 
                         return;
                     }
 
                     EResult acceptResult = SteamSockets.AcceptConnection(IsGameServer, steamConnection);
 
-                    if (acceptResult is not EResult.k_EResultOK)
+                    if (acceptResult is EResult.k_EResultOK)
                     {
-                        Logger<SteamNetworkingServerSocket>.LogError($"Steam could not accept a connection: [{acceptResult}].");
+                        SteamSockets.ConfigureLanes(IsGameServer, steamConnection, _sendBuffers.LanePriorities, _sendBuffers.LaneWeights);
 
-                        SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled: false);
+                        return;
                     }
+
+                    Logger<SteamNetworkingServerSocket>.LogError($"Steam could not accept a connection: [{acceptResult}].");
+
+                    SteamSockets.CloseConnection(IsGameServer, steamConnection, RefusedReason, isLingerEnabled: false);
 
                     return;
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected:
@@ -542,11 +637,16 @@ namespace Nucleus.Integrations.Unity.Transports
                     return;
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_ClosedByPeer:
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
+                    if (statusChanged.m_info.m_hListenSocket != _listenSocket)
+                        return;
+
+                    SteamSockets.LogClosed(in statusChanged.m_info, $"The link to Steam client [{statusChanged.m_info.m_identityRemote.GetSteamID64()}]");
+
                     // Steam keeps a closed connection's handle until it is closed here too.
                     if (_connectionsBySteamConnection.TryGetValue(steamConnection, out Connection connection))
                         ForgetAndQueueDeparture(steamConnection, connection);
 
-                    SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled: false);
+                    SteamSockets.CloseConnection(IsGameServer, steamConnection, reason: null, isLingerEnabled: false);
 
                     return;
             }
@@ -621,7 +721,7 @@ namespace Nucleus.Integrations.Unity.Transports
                 _steamConnectionsByConnection.Remove(connection);
 
                 if (!SteamSockets.IsShutDown(IsGameServer))
-                    SteamSockets.CloseConnection(IsGameServer, steamConnection, isLingerEnabled: false);
+                    SteamSockets.CloseConnection(IsGameServer, steamConnection, RefusedReason, isLingerEnabled: false);
             }
 
             _idBySocketPool.ReturnUnsafe(idBySocket);
@@ -655,7 +755,7 @@ namespace Nucleus.Integrations.Unity.Transports
             foreach (KeyValuePair<HSteamNetConnection, Connection> connectionKeyValuePair in _connectionsBySteamConnection)
             {
                 if (!isShutDown)
-                    SteamSockets.CloseConnection(IsGameServer, connectionKeyValuePair.Key, isLingerEnabled: false);
+                    SteamSockets.CloseConnection(IsGameServer, connectionKeyValuePair.Key, StoppedReason, isLingerEnabled: false);
 
                 departingConnections.Add(connectionKeyValuePair.Value);
             }
@@ -677,6 +777,11 @@ namespace Nucleus.Integrations.Unity.Transports
         {
             _connectionStatusChangedCallback?.Dispose();
             _connectionStatusChangedCallback = null;
+            _fakeIpResultCallback?.Dispose();
+            _fakeIpResultCallback = null;
+
+            if (Transport is SteamNetworkingTransport steamNetworkingTransport)
+                steamNetworkingTransport.ServerFakeAddress = null;
 
             if (!SteamSockets.IsShutDown(IsGameServer))
             {
@@ -747,3 +852,4 @@ namespace Nucleus.Integrations.Unity.Transports
         }
     }
 }
+#endif

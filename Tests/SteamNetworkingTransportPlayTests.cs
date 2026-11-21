@@ -390,6 +390,336 @@ namespace Nucleus.Integrations.Unity.Tests
         }
 
         /// <summary>
+        /// A client the connecting filter refuses is closed before the engine hears of it, the filter is asked with the client's own Steam
+        /// ID, and the same client joins once the filter lets it.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator RemoteClient_RefusedByTheConnectingFilter_NeverJoins_AndJoinsOnceLetIn()
+        {
+            ushort port = ProbeFreeUdpPort();
+            ulong ownSteamId = SteamUser.GetSteamID().m_SteamID;
+            ulong askedSteamId = SteamNetworkingTransport.UnsetSteamId;
+            bool isClientAllowed = false;
+
+            bool FilterConnectingClient(ulong steamId)
+            {
+                askedSteamId = steamId;
+
+                return isClientAllowed;
+            }
+
+            GameObject serverObject = NewInactiveObject("SteamServer");
+            UnityCoreManager serverCoreManager = serverObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager serverTransportManager = serverObject.AddComponent<UnityTransportManager>();
+            serverObject.AddComponent<SteamTransport>().ConnectingClientFilter = FilterConnectingClient;
+            serverObject.SetActive(true);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+
+            TransportManager serverTransportManagerCore = serverCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport serverTransport = (SteamNetworkingTransport)serverTransportManagerCore.Transports[0];
+            serverTransport.Addressing = SteamAddressing.IpAddress;
+            serverTransport.Configuration.Port = port;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+
+            GameObject clientObject = NewInactiveObject("SteamClient");
+            UnityCoreManager clientCoreManager = clientObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager clientTransportManager = clientObject.AddComponent<UnityTransportManager>();
+            clientObject.AddComponent<SteamTransport>().RemoteAddress = $"127.0.0.1:{port}";
+            clientObject.SetActive(true);
+
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            TransportManager clientTransportManagerCore = clientCoreManager.CoreManager.TransportManager;
+            ((SteamNetworkingTransport)clientTransportManagerCore.Transports[0]).Addressing = SteamAddressing.IpAddress;
+
+            LogAssert.ignoreFailingMessages = true;
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return new WaitForSecondsRealtime(1f);
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.AreEqual(ownSteamId, askedSteamId, "The filter was not asked with the connecting client's Steam ID.");
+            Assert.IsFalse(IsClientAuthenticated(clientTransportManagerCore), "A client the filter refused joined.");
+            Assert.AreEqual(0, serverTransportManagerCore.ActiveConnections.Count, "The server holds a client the filter refused.");
+
+            isClientAllowed = true;
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore));
+            Assert.IsTrue(IsClientAuthenticated(clientTransportManagerCore), "The client never joined once the filter let it in.");
+        }
+
+        /// <summary>
+        /// A server knows the Steam ID of every client and a client knows its own; a client learns the other clients' Steam IDs only
+        /// while the server shares them.
+        /// </summary>
+        /// <param name="isShared">Whether the server shares Steam IDs.</param>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator ClientSteamIds_AreKnownToTheServer_AndToOtherClientsOnlyWhenShared([Values(true, false)] bool isShared)
+        {
+            ushort port = ProbeFreeUdpPort();
+            ulong ownSteamId = SteamUser.GetSteamID().m_SteamID;
+
+            GameObject serverObject = NewInactiveObject("SteamServer");
+            UnityCoreManager serverCoreManager = serverObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager serverTransportManager = serverObject.AddComponent<UnityTransportManager>();
+            serverObject.AddComponent<SteamTransport>();
+            serverObject.SetActive(true);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+
+            TransportManager serverTransportManagerCore = serverCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport serverTransport = (SteamNetworkingTransport)serverTransportManagerCore.Transports[0];
+            serverTransport.Addressing = SteamAddressing.IpAddress;
+            serverTransport.Configuration.Port = port;
+            serverTransport.ShareSteamIdsEnabled = isShared;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+            yield return WaitForTask(serverTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(serverTransportManagerCore));
+
+            serverTransportManagerCore.TryGetLocalClientConnection(out Connection hostClientConnection);
+
+            GameObject clientObject = NewInactiveObject("SteamClient");
+            UnityCoreManager clientCoreManager = clientObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager clientTransportManager = clientObject.AddComponent<UnityTransportManager>();
+            clientObject.AddComponent<SteamTransport>().RemoteAddress = $"127.0.0.1:{port}";
+            clientObject.SetActive(true);
+
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            TransportManager clientTransportManagerCore = clientCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport clientTransport = (SteamNetworkingTransport)clientTransportManagerCore.Transports[0];
+            clientTransport.Addressing = SteamAddressing.IpAddress;
+
+            int clientSteamIdChangedCount = 0;
+
+            void OnClientSteamIdChanged(uint connectionId, ulong steamId) => clientSteamIdChangedCount++;
+
+            clientTransport.SteamIdChanged += OnClientSteamIdChanged;
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 2);
+
+            clientTransportManagerCore.TryGetLocalClientConnection(out Connection clientConnection);
+
+            Connection remoteClientConnection = null;
+
+            foreach (Connection activeConnection in serverTransportManagerCore.ActiveConnections)
+            {
+                if (!ReferenceEquals(activeConnection, hostClientConnection))
+                    remoteClientConnection = activeConnection;
+            }
+
+            // Shared IDs arrive a moment after the client joins; a case that shares none still waits as long before it looks.
+            yield return WaitUntil(() => clientTransport.TryGetSteamId(hostClientConnection.Id, out _) || !isShared && clientSteamIdChangedCount > 0);
+            yield return new WaitForSecondsRealtime(0.5f);
+
+            Assert.IsTrue(serverTransport.TryGetSteamId(remoteClientConnection, out ulong remoteClientSteamId) && remoteClientSteamId == ownSteamId, "The server does not know its remote client's Steam ID.");
+            Assert.IsTrue(serverTransport.TryGetSteamId(hostClientConnection, out ulong hostClientSteamId) && hostClientSteamId == ownSteamId, "The server does not know its own client's Steam ID.");
+            Assert.IsTrue(clientTransport.TryGetSteamId(clientConnection, out ulong clientSteamId) && clientSteamId == ownSteamId, "The client does not know its own Steam ID.");
+            Assert.AreEqual(isShared, clientTransport.TryGetSteamId(hostClientConnection.Id, out _), isShared ? "The client never learned the other client's Steam ID while the server shared them." : "The client learned the other client's Steam ID while the server shared none.");
+            Assert.AreEqual(isShared ? 2 : 1, clientSteamIdChangedCount, "The client did not report each Steam ID it learned once.");
+            Assert.IsTrue(clientTransport.TryGetConnection(ownSteamId, out Connection _), "The client could not find a Connection by Steam ID.");
+
+            clientTransport.SteamIdChanged -= OnClientSteamIdChanged;
+        }
+
+        /// <summary>
+        /// A server reads a client's message up to Synapse's largest packet, and Steam closes a client that sends a larger one before the
+        /// server reads any of it.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator RemoteClient_SendingPastThePacketLimit_IsClosed()
+        {
+            ushort port = ProbeFreeUdpPort();
+
+            GameObject serverObject = NewInactiveObject("SteamServer");
+            UnityCoreManager serverCoreManager = serverObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager serverTransportManager = serverObject.AddComponent<UnityTransportManager>();
+            serverObject.AddComponent<SteamTransport>();
+            serverObject.SetActive(true);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+
+            TransportManager serverTransportManagerCore = serverCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport serverTransport = (SteamNetworkingTransport)serverTransportManagerCore.Transports[0];
+            serverTransport.Addressing = SteamAddressing.IpAddress;
+            serverTransport.Configuration.Port = port;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+
+            GameObject clientObject = NewInactiveObject("SteamClient");
+            UnityCoreManager clientCoreManager = clientObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager clientTransportManager = clientObject.AddComponent<UnityTransportManager>();
+            clientObject.AddComponent<SteamTransport>().RemoteAddress = $"127.0.0.1:{port}";
+            clientObject.SetActive(true);
+
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            TransportManager clientTransportManagerCore = clientCoreManager.CoreManager.TransportManager;
+            ((SteamNetworkingTransport)clientTransportManagerCore.Transports[0]).Addressing = SteamAddressing.IpAddress;
+
+            int lastReceivedByteCount = 0;
+
+            void OnServerReceivedBulk(in MessageContext messageContext, SteamBulkMessage steamBulkMessage)
+            {
+                lastReceivedByteCount = steamBulkMessage.Payload.Count;
+
+                if (messageContext.IsDeserialized && steamBulkMessage.Payload.Array is not null)
+                    CodeBoost.Performance.TrackedArrayPool<byte>.Return(steamBulkMessage.Payload.Array);
+            }
+
+            serverCoreManager.CoreManager.MessageManager.RegisterMessageHandler<SteamBulkMessage>(OnServerReceivedBulk);
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 1);
+
+            int limitBytes = 255 * serverTransport.Configuration.MaximumTransmissionUnit;
+            int underLimitBytes = limitBytes / 2;
+
+            clientTransportManagerCore.TryGetServerConnection(out Connection serverConnection);
+            serverConnection.SendMessage(Channel.Reliable, new SteamBulkMessage { Payload = new(new byte[underLimitBytes]) });
+
+            yield return WaitUntil(() => lastReceivedByteCount == underLimitBytes);
+            Assert.AreEqual(underLimitBytes, lastReceivedByteCount, "The server never read a message well under the client packet limit.");
+
+            LogAssert.ignoreFailingMessages = true;
+
+            serverConnection.SendMessage(Channel.Reliable, new SteamBulkMessage { Payload = new(new byte[limitBytes + 1_000]) });
+
+            yield return WaitUntil(() => serverTransportManagerCore.ActiveConnections.Count == 0);
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.AreEqual(0, serverTransportManagerCore.ActiveConnections.Count, "The server still holds a client that sent a message past the limit.");
+            Assert.AreEqual(underLimitBytes, lastReceivedByteCount, "The server read a message past the limit.");
+
+            serverCoreManager.CoreManager.MessageManager.UnregisterMessageHandler<SteamBulkMessage>(OnServerReceivedBulk);
+        }
+
+        /// <summary>
+        /// An unreliable message sent behind a reliable burst still queued in Steam arrives before the burst does, because the two ride
+        /// lanes of their own.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator UnreliableMessage_SentBehindAReliableBurst_ArrivesFirst()
+        {
+            const int BurstBytes = 400_000;
+            const byte UnreliableValue = 7;
+
+            ushort port = ProbeFreeUdpPort();
+
+            GameObject serverObject = NewInactiveObject("SteamServer");
+            UnityCoreManager serverCoreManager = serverObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager serverTransportManager = serverObject.AddComponent<UnityTransportManager>();
+            serverObject.AddComponent<SteamTransport>();
+            serverObject.SetActive(true);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+
+            TransportManager serverTransportManagerCore = serverCoreManager.CoreManager.TransportManager;
+            SteamNetworkingTransport serverTransport = (SteamNetworkingTransport)serverTransportManagerCore.Transports[0];
+            serverTransport.Addressing = SteamAddressing.IpAddress;
+            serverTransport.Configuration.Port = port;
+            // Slow enough that the burst takes about half a second to leave, so anything queued behind it would plainly wait.
+            serverTransport.SendRateKilobytesPerSecond = 768;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+
+            GameObject clientObject = NewInactiveObject("SteamClient");
+            UnityCoreManager clientCoreManager = clientObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager clientTransportManager = clientObject.AddComponent<UnityTransportManager>();
+            clientObject.AddComponent<SteamTransport>().RemoteAddress = $"127.0.0.1:{port}";
+            clientObject.SetActive(true);
+
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            TransportManager clientTransportManagerCore = clientCoreManager.CoreManager.TransportManager;
+            ((SteamNetworkingTransport)clientTransportManagerCore.Transports[0]).Addressing = SteamAddressing.IpAddress;
+
+            float burstArrivedSeconds = -1f;
+            float unreliableArrivedSeconds = -1f;
+
+            void OnClientReceivedBulk(in MessageContext messageContext, SteamBulkMessage steamBulkMessage)
+            {
+                burstArrivedSeconds = Time.realtimeSinceStartup;
+
+                if (messageContext.IsDeserialized && steamBulkMessage.Payload.Array is not null)
+                    CodeBoost.Performance.TrackedArrayPool<byte>.Return(steamBulkMessage.Payload.Array);
+            }
+
+            void OnClientReceivedProbe(in MessageContext messageContext, SteamProbeMessage steamProbeMessage)
+            {
+                if (steamProbeMessage.Value == UnreliableValue)
+                    unreliableArrivedSeconds = Time.realtimeSinceStartup;
+            }
+
+            clientCoreManager.CoreManager.MessageManager.RegisterMessageHandler<SteamBulkMessage>(OnClientReceivedBulk);
+            clientCoreManager.CoreManager.MessageManager.RegisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 1);
+
+            serverCoreManager.CoreManager.ServerManager.SendMessage(Channel.Reliable, new SteamBulkMessage { Payload = new(new byte[BurstBytes]) });
+
+            // A frame later, so the burst is already in Steam's queue when the unreliable message is handed over.
+            yield return null;
+            yield return null;
+
+            serverCoreManager.CoreManager.ServerManager.SendMessage(Channel.Unreliable, new SteamProbeMessage { Value = UnreliableValue });
+
+            yield return WaitUntil(() => burstArrivedSeconds >= 0f && unreliableArrivedSeconds >= 0f);
+
+            Assert.GreaterOrEqual(burstArrivedSeconds, 0f, "The reliable burst never arrived.");
+            Assert.GreaterOrEqual(unreliableArrivedSeconds, 0f, "The unreliable message never arrived.");
+            Assert.Less(unreliableArrivedSeconds, burstArrivedSeconds, "The unreliable message waited behind the reliable burst.");
+
+            clientCoreManager.CoreManager.MessageManager.UnregisterMessageHandler<SteamBulkMessage>(OnClientReceivedBulk);
+            clientCoreManager.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+        }
+
+        /// <summary>
+        /// Launch arguments set where the client connects and the port, and a Steam ID that is not a number is refused with an error.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        public IEnumerator LaunchArguments_SetTheAddressSteamIdAndPort()
+        {
+            GameObject transportObject = NewInactiveObject("SteamTransport");
+            UnityCoreManager unityCoreManager = transportObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager unityTransportManager = transportObject.AddComponent<UnityTransportManager>();
+            transportObject.AddComponent<SteamTransport>();
+            transportObject.SetActive(true);
+
+            yield return WaitForTask(unityTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport steamNetworkingTransport = (SteamNetworkingTransport)unityCoreManager.CoreManager.TransportManager.Transports[0];
+
+            steamNetworkingTransport.ApplyCommandLineArguments(new CommandLineArguments(new[] { "-address", "203.0.113.7:27015", "-steamid", "76561198012345678", "-port", "27016" }));
+
+            Assert.AreEqual("203.0.113.7:27015", steamNetworkingTransport.RemoteAddress, "The address argument was not applied.");
+            Assert.AreEqual(76561198012345678UL, steamNetworkingTransport.RemoteSteamId, "The Steam ID argument was not applied.");
+            Assert.AreEqual(27016, steamNetworkingTransport.Configuration.Port, "The port argument was not applied.");
+
+            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("is not a Steam ID"));
+            steamNetworkingTransport.ApplyCommandLineArguments(new CommandLineArguments(new[] { "-steamid", "someone" }));
+
+            Assert.AreEqual(76561198012345678UL, steamNetworkingTransport.RemoteSteamId, "A Steam ID argument that is not a number replaced the one set before.");
+        }
+
+        /// <summary>
         /// Returns the send latency Steam simulates for the whole process on the player's interface, in milliseconds.
         /// </summary>
         private static int GetSteamsSimulatedLatencyMilliseconds()

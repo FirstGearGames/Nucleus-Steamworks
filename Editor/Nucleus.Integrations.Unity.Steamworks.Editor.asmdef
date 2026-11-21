@@ -14,10 +14,7 @@
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,
-    "defineConstraints": [
-        "NUCLEUS_STEAMWORKS",
-        "!DISABLESTEAMWORKS"
-    ],
+    "defineConstraints": [],
     "versionDefines": [
         {
             "name": "com.rlabrecque.steamworks.net",

@@ -1,11 +1,11 @@
 # Nucleus Steamworks
 
-**A Steam Networking Sockets transport for Nucleus: players connect by Steam ID through Valve's relay network, so nobody forwards a port or shares an address.** It can also connect by IP address and port, the way a dedicated server is usually reached. With Nucleus Pro, a session can survive losing its host.
+**A Steam Networking Sockets transport for Nucleus: players connect by Steam ID through Valve's relay network, so nobody forwards a port or shares an address.** It can also connect by IP address and port, the way a dedicated server is usually reached, or by a fake IP address Steam grants a dedicated server so its real address stays hidden. With Nucleus Pro, a session can survive losing its host.
 
 ## Requirements
 
 - Unity 6.5 or newer, with Nucleus already in the project. This assembly references `Nucleus.dll`, `CodeBoost.dll` and `Newfarm.Client.dll`, which Nucleus installs in `Assets/Nucleus`.
-- [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) installed as a package (`com.rlabrecque.steamworks.net`). Installing it defines `NUCLEUS_STEAMWORKS`, which is what makes these assemblies compile. If Steamworks.NET came into the project another way, add `NUCLEUS_STEAMWORKS` to the Scripting Define Symbols yourself.
+- [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) installed as a package (`com.rlabrecque.steamworks.net`). Installing it defines `NUCLEUS_STEAMWORKS`, which is what makes the transport compile. Until then only the **Steam Transport** component compiles, and its inspector has an **Install Steamworks.NET** button, which needs Git. If Steamworks.NET came into the project another way, add `NUCLEUS_STEAMWORKS` to the Scripting Define Symbols yourself.
 - Something in your game that initialises Steam and runs its callbacks every frame, such as Heathen's Foundation for Steamworks, a `SteamManager`, or your own call to `SteamAPI.RunCallbacks`. The transport never initialises Steam itself, because a process holds one Steam session and your game owns it.
 - A desktop platform: Windows, macOS or Linux, plus the Editor.
 
@@ -28,18 +28,44 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 
 | Setting | Default | What it does |
 |---|---|---|
-| Addressing | Steam ID | **Steam ID** goes through Valve's relay. **IP Address** listens on a port and connects to an address. |
+| Addressing | Steam ID | **Steam ID** goes through Valve's relay. **IP Address** listens on a port and connects to an address. **Fake IP** connects to an address Steam grants the server, over Valve's relay. |
 | Remote Steam Id | 0 | Who a client connects to by Steam ID. 0, or your own ID, joins your own server. |
 | Is Relay Only Enabled | off | Carry Steam ID links over Valve's relay only, so no player learns another's IP address. Off lets Steam connect two players directly when their Steam settings allow it, which can lower ping. |
-| Remote Address | empty | Who a client connects to by IP, optionally with a port such as `203.0.113.7:7777`. Host names are not looked up. |
+| Remote Address | empty | Who a client connects to by IP or fake IP, optionally with a port such as `203.0.113.7:7777`. Host names are not looked up. |
 | Port | 7777 | The port the server listens on by IP, and the one a client uses when its address names none. |
 | Bind Address | empty | The local address the server listens on by IP. Empty listens on every interface. |
 | Is Game Server | off | Serve through Steam's game server interface. Turn it on for a dedicated server, leave it off when a player hosts. |
 | Maximum Connections | 0 | The most clients the server accepts at once. 0 accepts any number. |
 | Maximum Transmission Unit | 1200 | The largest datagram built before it is split. |
 | Send Rate Kilobytes Per Second | 4096 | The rate Steam sends at on each connection. Steam's own is 256, slower than nearly any player's line, so a large join queues behind it. 0 keeps Steam's own. |
+| Ticket Authentication Enabled | off | Admit a client only once Steam confirms its auth session ticket: the account owns the game and is not banned. Server and clients both need it on. |
+| Share Steam Ids Enabled | off | Tell every client the Steam ID of every other client, for names, avatars and friend checks. Only the server's value counts. |
 
-`RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start.
+`RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start. While a server runs, the inspector shows where clients reach it, its Steam ID, fake IP address or port, with a **Copy** button.
+
+The transport also reads three launch arguments, when your game calls `ApplyCommandLineArguments()` on it: `-address` sets `RemoteAddress`, `-steamid` sets `RemoteSteamId`, and `-port` sets the port.
+
+## Dedicated servers
+
+A dedicated server turns on **Is Game Server** and runs as a Steam game server: your game calls `GameServer.Init`, logs on with `SteamGameServer.LogOnAnonymous()` or a login token, and calls `GameServer.RunCallbacks()` every frame. It needs no Steam client on the machine.
+
+With **Addressing** on **Fake IP**, players reach the server at an address Steam grants it rather than its real one, over Valve's relay, so nobody learns where the server is and no port is opened.
+
+1. Call `SteamGameServerNetworkingSockets.BeginAsyncRequestFakeIP(1)` after `GameServer.Init` and before logging on. Steam needs to know before the log on that the server will use a fake IP address.
+2. Start the server. Once Steam grants the address, the server logs it and `SteamNetworkingTransport.ServerFakeAddress` holds it, such as `169.254.12.34:27015`.
+3. Hand that address to players, through a server browser or a lobby, and set it as **Remote Address** on each of them.
+
+A server addressed by fake IP keeps the same address for as long as the process runs, across restarts of the server.
+
+## Players
+
+**Steam IDs.** `SteamNetworkingTransport.TryGetSteamId(connection, out ulong steamId)` reads a client's Steam ID, as Steam authenticated its link. It also takes a connection id, such as a system's controlling connection. `TryGetConnection(steamId, out Connection connection)` goes the other way. A server knows every client and a client knows itself. Turn on **Share Steam Ids Enabled** on the server to let clients look each other up as well; it is off by default because a Steam ID leads to the player's public Steam profile. Shared IDs arrive a moment after a client joins, so subscribe to `SteamIdChanged` as well as reading them. Its Steam ID is `SteamNetworkingTransport.UnsetSteamId` when a client leaves.
+
+**Refusing players.** Set `ConnectingClientFilter` on the **Steam Transport** to a method that takes a Steam ID and returns false to refuse it, for a ban list or lobby members only. A refused player is closed before your game hears of it, and its log says it was refused by the server.
+
+**Ticket authentication.** With **Ticket Authentication Enabled**, a client sends the server a Steam auth session ticket, and the server admits it only once Steam confirms that the account owns the game and is not banned. Set `ClientAdmissionFilter` on the **Steam Transport** to refuse a player before its ticket is checked; unlike `ConnectingClientFilter`, it can tell the player why, through `ServerManager.DenyClient(connection, notice)`. If Steam withdraws its approval later, such as for a VAC ban, the server kicks the player and tells it why. A transport set up from code makes a `SteamTicketAuthenticator`, calls `Initialize(coreManager, transport)` once the transport is added, and `Deinitialize()` before it is removed.
+
+**Packet size.** A server accepts a message of up to 255 times the transmission unit from a client, 306,000 bytes by default, the same as Synapse. Steam closes a client that sends a larger one before the server reads any of it.
 
 ## Host migration (Nucleus Pro)
 
@@ -71,6 +97,8 @@ Host migration moved off the **Steam Transport** onto its own **Steam Host Migra
 - **A host's own client never appears in Steam.** It is paired with the server inside the process, so its traffic never leaves the machine.
 - **A client that cannot reach its server waits for Steam to give up.** That is Steam's own connect timeout, 10 seconds, unless `SteamNetworkingTransport.ConnectTimeoutMilliseconds` sets a shorter one.
 - **The world stays put when the link drops** while host migration is on. That is deliberate: it is what the next host carries on from.
+- **Every dropped link logs a line saying why it closed.** It names Steam's reason, such as a timeout or a refusal, and the text the other side gave. That is information, not an error.
+- **A player with Ticket Authentication off is dropped by a server with it on** once the authentication timeout passes, 30 seconds by default, because it never sends a ticket. A player with it on joins a server with it off unchecked.
 - **"Steam was shut down while the server was running" or "while the client was connected".** Your game shut Steam down before stopping the transport. Steam closed every link as it went, so the transport stops and forgets them rather than throwing; stop the transport first to close them cleanly.
 
 ## Troubleshooting
@@ -79,6 +107,7 @@ Host migration moved off the **Steam Transport** onto its own **Steam Host Migra
 - **"Steam refused to open a listen socket" or "Steam refused to connect".** Steam is not initialised yet. Make sure whatever starts Steam runs before the server or client starts.
 - **"Could not connect: Steam's network config did not arrive in time".** A client waits for Steam to fetch its network config before it dials, since a dial made before it arrives fails at once, and `ConnectTimeoutMilliseconds` ran out first. Check that Steam is online, or give it longer. With no `ConnectTimeoutMilliseconds` the wait lasts at most Steam's own connect timeout, 10 seconds, then the client dials anyway.
 - **A client connects by IP to nothing.** Check that the address is an IP address rather than a host name, and that the server's port is open to it.
+- **"Steam did not grant this server a fake IP address".** A game server must ask for one between `GameServer.Init` and logging on, as in **Dedicated servers** above. Steam retries for a while before it gives up, so this can take minutes to appear.
 - **Hosting a migratable session fails by IP with an address length error.** The address and port together must fit in 64 characters. Use an IPv4 address in **Hosted Address**.
 
 ## Checking a link
@@ -93,8 +122,8 @@ From code, `SteamNetworkingTransport.TryGetLinkStatus(connection, out SteamLinkS
 
 ## Tests
 
-The play tests in `Tests` run over a real Steam connection. They need the Steam client running and signed in, and a `steam_appid.txt` holding an app id (480, Spacewar, for testing) in the project folder. They are skipped when Steam cannot be initialised.
+The play tests in `Tests` run over a real Steam connection. They need the Steam client running and signed in, and a `steam_appid.txt` holding an app id (480, Spacewar, for testing) in the project folder. They are skipped when Steam cannot be initialised. The dedicated server cases also log a game server on anonymously in the same process, and are skipped when it cannot. In a project that installs this as a package, list `com.firstgeargames.nucleus.steamworks` under `testables` in `Packages/manifest.json` so the Test Runner finds them.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Fake IP addressing, Steam IDs, the connecting filter, ticket authentication, send lanes and the inspector's install button are adapted from [maxkratt/nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), also MIT.

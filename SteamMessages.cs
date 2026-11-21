@@ -1,3 +1,5 @@
+// Matches Steamworks.NET's own switch, so this compiles out wherever Steamworks.NET does, not only where it is missing.
+#if NUCLEUS_STEAMWORKS && !DISABLESTEAMWORKS && (UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX || UNITY_STANDALONE_OSX || UNITY_ANDROID || STEAMWORKS_WIN || STEAMWORKS_LIN_OSX)
 using System;
 using System.Runtime.InteropServices;
 using CodeBoost.Performance;
@@ -36,6 +38,10 @@ namespace Nucleus.Integrations.Unity.Transports
         /// Where the send flags sit in a native message.
         /// </summary>
         private static readonly int FlagsOffset = (int)Marshal.OffsetOf(typeof(SteamNetworkingMessage_t), nameof(SteamNetworkingMessage_t.m_nFlags));
+        /// <summary>
+        /// Where the lane index sits in a native message.
+        /// </summary>
+        private static readonly int LaneOffset = (int)Marshal.OffsetOf(typeof(SteamNetworkingMessage_t), nameof(SteamNetworkingMessage_t.m_idxLane));
 
         /// <summary>
         /// Copies a received message into a pooled array and releases the native message.
@@ -59,36 +65,41 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
-        /// Sends a payload on a connection, reliably or not as its channel says.
+        /// Sends a payload on a connection, reliably or not as its channel says, on that channel's lane.
         /// </summary>
         /// <param name="isGameServer">True when the connection belongs to the game server interface.</param>
         /// <param name="connection">The connection to send on.</param>
         /// <param name="channel">The channel the engine chose.</param>
-        /// <param name="payload">The payload, which Steam copies before this returns.</param>
+        /// <param name="payload">The payload, copied into a message Steam owns before this returns.</param>
+        /// <param name="sendBuffers">The sending socket's own one-message buffers.</param>
         /// <returns><c>k_EResultOK</c> when Steam accepted the payload, otherwise Steam's reason for refusing it.</returns>
         /// <remarks>
         /// Sent without Nagle's delay, because the engine already gathers a tick's data into as few packets as it can, and holding them
-        /// longer would only add latency.
+        /// longer would only add latency. Steam's batched send is the only one that can name a lane, so each packet goes through it alone.
         /// </remarks>
-        internal static EResult Send(bool isGameServer, HSteamNetConnection connection, Channel channel, ArraySegment<byte> payload)
+        internal static EResult Send(bool isGameServer, HSteamNetConnection connection, Channel channel, ArraySegment<byte> payload, SteamSendBuffers sendBuffers)
         {
             if (payload.Array is null)
                 return EResult.k_EResultInvalidParam;
 
-            int sendFlags = channel is Channel.Reliable ? Constants.k_nSteamNetworkingSend_ReliableNoNagle : Constants.k_nSteamNetworkingSend_UnreliableNoNagle;
+            bool isReliable = channel is Channel.Reliable;
+            IntPtr message = SteamSockets.AllocateMessage(isGameServer, payload.Count);
 
-            GCHandle pinnedPayload = GCHandle.Alloc(payload.Array, GCHandleType.Pinned);
+            if (message == IntPtr.Zero)
+                return EResult.k_EResultLimitExceeded;
 
-            try
-            {
-                IntPtr data = pinnedPayload.AddrOfPinnedObject() + payload.Offset;
+            Marshal.Copy(payload.Array, payload.Offset, Marshal.ReadIntPtr(message, DataOffset), payload.Count);
+            Marshal.WriteInt32(message, ConnectionOffset, (int)connection.m_HSteamNetConnection);
+            Marshal.WriteInt32(message, FlagsOffset, isReliable ? Constants.k_nSteamNetworkingSend_ReliableNoNagle : Constants.k_nSteamNetworkingSend_UnreliableNoNagle);
+            Marshal.WriteInt16(message, LaneOffset, (short)(isReliable ? SteamSockets.ReliableLane : SteamSockets.UnreliableLane));
 
-                return SteamSockets.SendMessageToConnection(isGameServer, connection, data, (uint)payload.Count, sendFlags);
-            }
-            finally
-            {
-                pinnedPayload.Free();
-            }
+            sendBuffers.Messages[0] = message;
+            SteamSockets.SendMessages(isGameServer, sendBuffers.Messages, sendBuffers.Results);
+
+            long result = sendBuffers.Results[0];
+
+            return result >= 0 ? EResult.k_EResultOK : (EResult)(-result);
         }
     }
 }
+#endif

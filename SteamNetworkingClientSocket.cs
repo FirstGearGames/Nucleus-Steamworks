@@ -1,3 +1,5 @@
+// Matches Steamworks.NET's own switch, so this compiles out wherever Steamworks.NET does, not only where it is missing.
+#if NUCLEUS_STEAMWORKS && !DISABLESTEAMWORKS && (UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX || UNITY_STANDALONE_OSX || UNITY_ANDROID || STEAMWORKS_WIN || STEAMWORKS_LIN_OSX)
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -33,6 +35,11 @@ namespace Nucleus.Integrations.Unity.Transports
         /// Native message pointers filled by each receive call.
         /// </summary>
         private readonly IntPtr[] _messages = new IntPtr[SteamMessages.MaximumMessagesPerReceive];
+
+        /// <summary>
+        /// The arrays each send and the link's lanes are handed to Steam in.
+        /// </summary>
+        private readonly SteamSendBuffers _sendBuffers = new();
 
         /// <summary>
         /// The connection to a remote server, or invalid while disconnected or paired in process.
@@ -89,6 +96,11 @@ namespace Nucleus.Integrations.Unity.Transports
         private const uint SteamConnectingTimeoutSeconds = 10;
 
         /// <summary>
+        /// Why this client closed its link, as the server's close log reads.
+        /// </summary>
+        private const string DisconnectedReason = "The client disconnected.";
+
+        /// <summary>
         /// Creates a new instance.
         /// </summary>
         public SteamNetworkingClientSocket() { }
@@ -141,7 +153,9 @@ namespace Nucleus.Integrations.Unity.Transports
 
             _serverStandIn = serverSocket.Connection;
 
-            bool isIpAddressing = steamNetworkingTransport.Addressing is SteamAddressing.IpAddress;
+            SteamAddressing addressing = steamNetworkingTransport.Addressing;
+            // A fake IP address is dialled exactly as a real one is; Steam recognises it and routes the link over its relay.
+            bool isIpAddressing = addressing is SteamAddressing.IpAddress or SteamAddressing.FakeIp;
             string remoteAddress = steamNetworkingTransport.RemoteAddress;
             ushort port = steamNetworkingTransport.Configuration.Port;
             SteamNetworkingIPAddr remoteIpAddress = default;
@@ -149,9 +163,12 @@ namespace Nucleus.Integrations.Unity.Transports
 
             if (isHosting)
             {
-                bool isOwnServerNamed = isIpAddressing
-                    ? string.IsNullOrEmpty(remoteAddress) || isRemoteIpAddressRead && remoteIpAddress.IsLocalHost() && remoteIpAddress.m_port == port
-                    : remoteSteamId == 0 || remoteSteamId == SteamSockets.GetSteamId(serverSocket.IsGameServer);
+                bool isOwnServerNamed = addressing switch
+                {
+                    SteamAddressing.IpAddress => string.IsNullOrEmpty(remoteAddress) || isRemoteIpAddressRead && remoteIpAddress.IsLocalHost() && remoteIpAddress.m_port == port,
+                    SteamAddressing.FakeIp => string.IsNullOrEmpty(remoteAddress) || remoteAddress == steamNetworkingTransport.ServerFakeAddress,
+                    _ => remoteSteamId == 0 || remoteSteamId == SteamSockets.GetSteamId(serverSocket.IsGameServer),
+                };
 
                 if (isOwnServerNamed)
                     return ConnectLocallyPaired(serverSocket);
@@ -196,7 +213,7 @@ namespace Nucleus.Integrations.Unity.Transports
             }
 
             _connectionStatusChangedCallback = SteamSockets.CreateStatusCallback(isGameServer: false, OnConnectionStatusChanged);
-            SteamNetworkingConfigValue_t[] connectionOptions = SteamSockets.CreateConnectionOptions(steamNetworkingTransport);
+            SteamNetworkingConfigValue_t[] connectionOptions = SteamSockets.CreateConnectionOptions(steamNetworkingTransport, isServer: false);
             _steamConnection = isIpAddressing ? SteamSockets.ConnectByIPAddress(ref remoteIpAddress, connectionOptions) : SteamSockets.ConnectP2P(remoteSteamId, connectionOptions);
 
             if (_steamConnection == HSteamNetConnection.Invalid)
@@ -205,6 +222,8 @@ namespace Nucleus.Integrations.Unity.Transports
 
                 return Fail();
             }
+
+            SteamSockets.ConfigureLanes(isGameServer: false, _steamConnection, _sendBuffers.LanePriorities, _sendBuffers.LaneWeights);
 
             /* Read again after every wait: Steam's callback pump, which sets these, runs on this thread between them. A Steam shut down
              * meanwhile raises nothing more, so that ends the wait too. */
@@ -328,7 +347,7 @@ namespace Nucleus.Integrations.Unity.Transports
                 return;
             }
 
-            EResult sendResult = SteamMessages.Send(isGameServer: false, _steamConnection, outgoingPacket.Channel, outgoingPacket.Payload);
+            EResult sendResult = SteamMessages.Send(isGameServer: false, _steamConnection, outgoingPacket.Channel, outgoingPacket.Payload, _sendBuffers);
 
             if (sendResult is EResult.k_EResultOK)
             {
@@ -428,6 +447,18 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
+        /// Reads the identity Steam authenticated for the server this client is linked to over Steam.
+        /// </summary>
+        /// <param name="serverIdentity">The server's identity.</param>
+        /// <returns>True when this client has a Steam link to read it from; a paired client has none.</returns>
+        internal bool TryGetServerIdentity(out SteamNetworkingIdentity serverIdentity)
+        {
+            serverIdentity = default;
+
+            return _pairedServerSocket is null && _steamConnection != HSteamNetConnection.Invalid && SteamSockets.TryGetRemoteIdentity(isGameServer: false, _steamConnection, out serverIdentity);
+        }
+
+        /// <summary>
         /// Handles Steam's report of the connection changing state. Raised from inside Steam's callback pump on the main thread.
         /// </summary>
         /// <param name="statusChanged">What changed.</param>
@@ -444,6 +475,8 @@ namespace Nucleus.Integrations.Unity.Transports
                     return;
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_ClosedByPeer:
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
+                    SteamSockets.LogClosed(in statusChanged.m_info, "The link to the server");
+
                     if (!_isSteamConnected)
                         IsLastConnectRefused = statusChanged.m_info.m_eState is ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_ClosedByPeer;
 
@@ -478,7 +511,7 @@ namespace Nucleus.Integrations.Unity.Transports
             if (_steamConnection != HSteamNetConnection.Invalid)
             {
                 if (!SteamSockets.IsShutDown(isGameServer: false))
-                    SteamSockets.CloseConnection(isGameServer: false, _steamConnection, isLingerEnabled: false);
+                    SteamSockets.CloseConnection(isGameServer: false, _steamConnection, DisconnectedReason, isLingerEnabled: false);
 
                 _steamConnection = HSteamNetConnection.Invalid;
             }
@@ -504,3 +537,4 @@ namespace Nucleus.Integrations.Unity.Transports
         }
     }
 }
+#endif

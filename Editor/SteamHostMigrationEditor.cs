@@ -1,3 +1,5 @@
+// Matches Steamworks.NET's own switch, so this compiles out wherever Steamworks.NET does, not only where it is missing.
+#if NUCLEUS_STEAMWORKS && !DISABLESTEAMWORKS && (UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX || UNITY_STANDALONE_OSX || UNITY_ANDROID || STEAMWORKS_WIN || STEAMWORKS_LIN_OSX)
 using Nucleus.Integrations.Unity.Transports;
 using UnityEditor;
 
@@ -26,3 +28,4 @@ namespace Nucleus.Integrations.Unity.Editor
         }
     }
 }
+#endif

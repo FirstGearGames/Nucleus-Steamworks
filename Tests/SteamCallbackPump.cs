@@ -10,9 +10,20 @@ namespace Nucleus.Integrations.Unity.Tests
     public class SteamCallbackPump : MonoBehaviour
     {
         /// <summary>
+        /// Whether a game server's callbacks are run as well as the player's.
+        /// </summary>
+        public bool IsGameServerPumped;
+
+        /// <summary>
         /// Dispatches whatever Steam has queued since the last frame.
         /// </summary>
-        private void Update() => SteamAPI.RunCallbacks();
+        private void Update()
+        {
+            SteamAPI.RunCallbacks();
+
+            if (IsGameServerPumped)
+                GameServer.RunCallbacks();
+        }
     }
 }
 #endif

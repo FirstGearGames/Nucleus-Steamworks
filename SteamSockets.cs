@@ -1,3 +1,5 @@
+// Matches Steamworks.NET's own switch, so this compiles out wherever Steamworks.NET does, not only where it is missing.
+#if NUCLEUS_STEAMWORKS && !DISABLESTEAMWORKS && (UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX || UNITY_STANDALONE_OSX || UNITY_ANDROID || STEAMWORKS_WIN || STEAMWORKS_LIN_OSX)
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -17,6 +19,44 @@ namespace Nucleus.Integrations.Unity.Transports
     /// </remarks>
     internal static class SteamSockets
     {
+        /// <summary>
+        /// The lane reliable packets are sent on.
+        /// </summary>
+        internal const ushort ReliableLane = 0;
+        /// <summary>
+        /// The lane unreliable packets are sent on, so state never waits behind a reliable burst queued in Steam.
+        /// </summary>
+        internal const ushort UnreliableLane = 1;
+        /// <summary>
+        /// How many lanes each connection is given.
+        /// </summary>
+        internal const int LaneCount = 2;
+        /// <summary>
+        /// The priority both lanes share, so neither waits for the other to empty.
+        /// </summary>
+        internal const int LanePriority = 0;
+        /// <summary>
+        /// The reliable lane's share of the send rate while both lanes have data queued.
+        /// </summary>
+        internal const ushort ReliableLaneWeight = 1;
+        /// <summary>
+        /// The unreliable lane's share of the send rate while both lanes have data queued: three to the reliable lane's one, so state keeps
+        /// flowing while a reliable burst such as a late join still moves.
+        /// </summary>
+        internal const ushort UnreliableLaneWeight = 3;
+        /// <summary>
+        /// The fake port a server addressed by fake IP listens on: the first and only one it asks Steam for.
+        /// </summary>
+        internal const int FakePortIndex = 0;
+        /// <summary>
+        /// The most segments Synapse carries one packet in, which with the transmission unit sets the largest packet a client may send.
+        /// </summary>
+        /// <remarks>Matches Synapse, so a client is held to the same packet size whichever of the two transports it joins over.</remarks>
+        internal const int MaximumClientPacketSegments = 255;
+        /// <summary>
+        /// The reason given to Steam whenever this transport closes a connection; the text beside it says why.
+        /// </summary>
+        private const int ApplicationCloseReason = (int)ESteamNetConnectionEnd.k_ESteamNetConnectionEnd_App_Generic;
         /// <summary>
         /// How long Steam holds back a packet it reorders, in milliseconds.
         /// </summary>
@@ -99,16 +139,65 @@ namespace Nucleus.Integrations.Unity.Transports
         internal static HSteamListenSocket CreateListenSocketIP(bool isGameServer, ref SteamNetworkingIPAddr localAddress, SteamNetworkingConfigValue_t[] options) => isGameServer ? SteamGameServerNetworkingSockets.CreateListenSocketIP(ref localAddress, GetOptionCount(options), options) : SteamNetworkingSockets.CreateListenSocketIP(ref localAddress, GetOptionCount(options), options);
 
         /// <summary>
-        /// Builds the settings a socket's connections are opened with: Steam's send rate held at the transport's, and its relay only
-        /// setting. Steam's own timeouts are kept.
+        /// Opens a listen socket that peers reach by the fake IP address Steam grants this account.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="options">The settings every connection the socket accepts is opened with, or <see langword="null"/> for Steam's own.</param>
+        /// <remarks>Needs <see cref="BeginAsyncRequestFakeIP"/> called first, though not its grant to have arrived.</remarks>
+        internal static HSteamListenSocket CreateListenSocketP2PFakeIP(bool isGameServer, SteamNetworkingConfigValue_t[] options) => isGameServer ? SteamGameServerNetworkingSockets.CreateListenSocketP2PFakeIP(FakePortIndex, GetOptionCount(options), options) : SteamNetworkingSockets.CreateListenSocketP2PFakeIP(FakePortIndex, GetOptionCount(options), options);
+
+        /// <summary>
+        /// Asks Steam for a fake IP address with one port.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <returns>True when a new request began; false when one was already made in this process, whose grant <see cref="GetFakeIP"/> reads.</returns>
+        /// <remarks>The grant arrives later as a <see cref="SteamNetworkingFakeIPResult_t"/> callback.</remarks>
+        internal static bool BeginAsyncRequestFakeIP(bool isGameServer) => isGameServer ? SteamGameServerNetworkingSockets.BeginAsyncRequestFakeIP(nNumPorts: 1) : SteamNetworkingSockets.BeginAsyncRequestFakeIP(nNumPorts: 1);
+
+        /// <summary>
+        /// Reads the fake IP address this process was already granted.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="fakeIpResult">Steam's grant, whose result says whether there is one.</param>
+        internal static void GetFakeIP(bool isGameServer, out SteamNetworkingFakeIPResult_t fakeIpResult)
+        {
+            if (isGameServer)
+                SteamGameServerNetworkingSockets.GetFakeIP(FakePortIndex, out fakeIpResult);
+            else
+                SteamNetworkingSockets.GetFakeIP(FakePortIndex, out fakeIpResult);
+        }
+
+        /// <summary>
+        /// Creates the fake IP grant callback for the chosen interface, which Steam raises from inside its own callback pump.
+        /// </summary>
+        internal static Callback<SteamNetworkingFakeIPResult_t> CreateFakeIpResultCallback(bool isGameServer, Callback<SteamNetworkingFakeIPResult_t>.DispatchDelegate handler) => isGameServer ? Callback<SteamNetworkingFakeIPResult_t>.CreateGameServer(handler) : Callback<SteamNetworkingFakeIPResult_t>.Create(handler);
+
+        /// <summary>
+        /// Writes a fake IP grant as the address and port a client connects to, such as <c>169.254.12.34:27015</c>.
+        /// </summary>
+        /// <param name="fakeIpResult">A successful grant.</param>
+        /// <returns>The address.</returns>
+        internal static string FormatFakeAddress(in SteamNetworkingFakeIPResult_t fakeIpResult)
+        {
+            uint ip = fakeIpResult.m_unIP;
+
+            return $"{ip >> 24}.{(ip >> 16) & 0xFF}.{(ip >> 8) & 0xFF}.{ip & 0xFF}:{fakeIpResult.m_unPorts[FakePortIndex]}";
+        }
+
+        /// <summary>
+        /// Builds the settings a socket's connections are opened with: Steam's send rate held at the transport's, its relay only setting
+        /// and, on a server, the largest message a client may send. Steam's own timeouts are kept.
         /// </summary>
         /// <param name="steamNetworkingTransport">The transport whose settings are read.</param>
+        /// <param name="isServer">True for the server's listen socket, whose accepted connections are held to the client packet limit.</param>
         /// <returns>The settings.</returns>
         /// <remarks>
         /// The rate is set as both Steam's lowest and highest, because Steam sends at its lowest unless something raises it, and nothing
-        /// does, so a higher ceiling alone changes nothing. A rate of zero keeps Steam's own. Built once per socket, when it opens.
+        /// does, so a higher ceiling alone changes nothing. A rate of zero keeps Steam's own. A client sending a message past the limit is
+        /// closed by Steam itself before anything is read, as Synapse refuses a packet needing more than its segments. Built once per
+        /// socket, when it opens.
         /// </remarks>
-        internal static SteamNetworkingConfigValue_t[] CreateConnectionOptions(SteamNetworkingTransport steamNetworkingTransport)
+        internal static SteamNetworkingConfigValue_t[] CreateConnectionOptions(SteamNetworkingTransport steamNetworkingTransport, bool isServer)
         {
             uint sendRateKilobytesPerSecond = steamNetworkingTransport.SendRateKilobytesPerSecond;
 
@@ -122,12 +211,47 @@ namespace Nucleus.Integrations.Unity.Transports
                 options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, sendRateBytesPerSecond));
             }
 
-            // Only a Steam ID link tries a direct route; an IP address is dialled as given.
+            // Only a Steam ID link tries a direct route; an IP address is dialled as given, and a fake IP always rides the relay.
             if (steamNetworkingTransport.IsRelayOnlyEnabled && steamNetworkingTransport.Addressing is SteamAddressing.SteamId)
                 options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable, Constants.k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Disable));
 
+            if (isServer)
+                options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_RecvMaxMessageSize, GetMaximumClientPacketBytes(steamNetworkingTransport)));
+
             return options.ToArray();
         }
+
+        /// <summary>
+        /// Returns the largest message a server accepts from a client: Synapse's most segments times the transmission unit.
+        /// </summary>
+        /// <param name="steamNetworkingTransport">The transport whose transmission unit is read.</param>
+        /// <returns>The limit, in bytes.</returns>
+        internal static int GetMaximumClientPacketBytes(SteamNetworkingTransport steamNetworkingTransport) => (int)Math.Min((long)MaximumClientPacketSegments * steamNetworkingTransport.Configuration.MaximumTransmissionUnit, int.MaxValue);
+
+        /// <summary>
+        /// Gives a connection its reliable and unreliable lanes, so unreliable state never waits behind a reliable burst queued in Steam.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="connection">The connection, which may still be connecting.</param>
+        /// <param name="lanePriorities">The priority of each lane, <see cref="LaneCount"/> long.</param>
+        /// <param name="laneWeights">The share of each lane, <see cref="LaneCount"/> long.</param>
+        internal static void ConfigureLanes(bool isGameServer, HSteamNetConnection connection, int[] lanePriorities, ushort[] laneWeights)
+        {
+            EResult result = isGameServer
+                ? SteamGameServerNetworkingSockets.ConfigureConnectionLanes(connection, LaneCount, lanePriorities, laneWeights)
+                : SteamNetworkingSockets.ConfigureConnectionLanes(connection, LaneCount, lanePriorities, laneWeights);
+
+            if (result is not EResult.k_EResultOK)
+                Logger<SteamNetworkingTransport>.LogError($"Steam could not give connection [{connection.m_HSteamNetConnection}] its lanes: [{result}]. Its unreliable packets will be refused.");
+        }
+
+        /// <summary>
+        /// Logs why Steam closed a link, which the engine's disconnect does not carry.
+        /// </summary>
+        /// <param name="connectionInfo">Steam's description of the closed link.</param>
+        /// <param name="subject">What the link was, starting the sentence.</param>
+        internal static void LogClosed(in SteamNetConnectionInfo_t connectionInfo, string subject) =>
+            Logger<SteamNetworkingTransport>.LogInformation($"{subject} closed: [{(ESteamNetConnectionEnd)connectionInfo.m_eEndReason}] [{connectionInfo.m_szEndDebug}].");
 
         /// <summary>
         /// Reads an IP address, with or without a port, into Steam's form.
@@ -200,13 +324,30 @@ namespace Nucleus.Integrations.Unity.Transports
         /// </summary>
         /// <param name="isGameServer">True for the game server interface.</param>
         /// <param name="connection">The connection to close.</param>
+        /// <param name="reason">Why, which the far end logs when it learns of the close, or <see langword="null"/> for a handle the far end already closed.</param>
         /// <param name="isLingerEnabled">True to keep sending reliable data already queued before the connection closes.</param>
-        internal static void CloseConnection(bool isGameServer, HSteamNetConnection connection, bool isLingerEnabled)
+        internal static void CloseConnection(bool isGameServer, HSteamNetConnection connection, string reason, bool isLingerEnabled)
         {
             if (isGameServer)
-                SteamGameServerNetworkingSockets.CloseConnection(connection, 0, null, isLingerEnabled);
+                SteamGameServerNetworkingSockets.CloseConnection(connection, ApplicationCloseReason, reason, isLingerEnabled);
             else
-                SteamNetworkingSockets.CloseConnection(connection, 0, null, isLingerEnabled);
+                SteamNetworkingSockets.CloseConnection(connection, ApplicationCloseReason, reason, isLingerEnabled);
+        }
+
+        /// <summary>
+        /// Reads the identity Steam authenticated for the far end of a connection.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="connection">The connection.</param>
+        /// <param name="remoteIdentity">The far end's identity, when Steam knows the connection.</param>
+        /// <returns>True when Steam described the connection.</returns>
+        internal static bool TryGetRemoteIdentity(bool isGameServer, HSteamNetConnection connection, out SteamNetworkingIdentity remoteIdentity)
+        {
+            SteamNetConnectionInfo_t connectionInfo;
+            bool isKnown = isGameServer ? SteamGameServerNetworkingSockets.GetConnectionInfo(connection, out connectionInfo) : SteamNetworkingSockets.GetConnectionInfo(connection, out connectionInfo);
+            remoteIdentity = connectionInfo.m_identityRemote;
+
+            return isKnown;
         }
 
         /// <summary>
@@ -230,12 +371,27 @@ namespace Nucleus.Integrations.Unity.Transports
         internal static HSteamNetConnection ConnectByIPAddress(ref SteamNetworkingIPAddr remoteAddress, SteamNetworkingConfigValue_t[] options) => SteamNetworkingSockets.ConnectByIPAddress(ref remoteAddress, GetOptionCount(options), options);
 
         /// <summary>
-        /// Sends a message on a connection.
+        /// Allocates a native message with a payload buffer of the given size, for <see cref="SendMessages"/> to take.
         /// </summary>
-        /// <returns><c>k_EResultOK</c> when Steam accepted the message, otherwise Steam's reason for refusing it.</returns>
-        internal static EResult SendMessageToConnection(bool isGameServer, HSteamNetConnection connection, IntPtr data, uint length, int sendFlags) => isGameServer
-            ? SteamGameServerNetworkingSockets.SendMessageToConnection(connection, data, length, sendFlags, out _)
-            : SteamNetworkingSockets.SendMessageToConnection(connection, data, length, sendFlags, out _);
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="size">The payload's length, in bytes.</param>
+        /// <returns>The message, which Steam frees once it is sent.</returns>
+        internal static IntPtr AllocateMessage(bool isGameServer, int size) => isGameServer ? SteamGameServerNetworkingUtils.AllocateMessage(size) : SteamNetworkingUtils.AllocateMessage(size);
+
+        /// <summary>
+        /// Hands Steam native messages to send, each naming its connection, flags and lane. Steam owns every message afterwards, whether
+        /// sent or refused.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="messages">The messages.</param>
+        /// <param name="results">Filled with each message's number, or its negated <see cref="EResult"/> when refused.</param>
+        internal static void SendMessages(bool isGameServer, IntPtr[] messages, long[] results)
+        {
+            if (isGameServer)
+                SteamGameServerNetworkingSockets.SendMessages(messages.Length, messages, results, bDeleteFailedMessages: true);
+            else
+                SteamNetworkingSockets.SendMessages(messages.Length, messages, results, bDeleteFailedMessages: true);
+        }
 
         /// <summary>
         /// Takes up to <paramref name="messages"/>.Length waiting messages from every connection in a poll group.
@@ -383,3 +539,4 @@ namespace Nucleus.Integrations.Unity.Transports
         }
     }
 }
+#endif

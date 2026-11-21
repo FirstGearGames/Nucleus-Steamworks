@@ -21,7 +21,8 @@
     "defineConstraints": [
         "UNITY_INCLUDE_TESTS",
         "NUCLEUS_STEAMWORKS",
-        "!DISABLESTEAMWORKS"
+        "!DISABLESTEAMWORKS",
+        "UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX || UNITY_STANDALONE_OSX || UNITY_ANDROID || STEAMWORKS_WIN || STEAMWORKS_LIN_OSX"
     ],
     "versionDefines": [
         {

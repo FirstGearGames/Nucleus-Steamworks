@@ -18,5 +18,12 @@ namespace Nucleus.Integrations.Unity.Transports
         /// </summary>
         [InspectorName("IP Address")]
         IpAddress = 1,
+        /// <summary>
+        /// By a fake IP address Steam grants the server, carried over Valve's relay network, so a dedicated server's real address is never
+        /// shown to players and no port is opened. The server reads its grant from
+        /// <see cref="SteamNetworkingTransport.ServerFakeAddress"/>, and a client connects to it as <see cref="SteamNetworkingTransport.RemoteAddress"/>.
+        /// </summary>
+        [InspectorName("Fake IP")]
+        FakeIp = 2,
     }
 }
