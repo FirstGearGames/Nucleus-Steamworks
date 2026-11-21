@@ -120,6 +120,23 @@ From code, `SteamNetworkingTransport.TryGetLinkStatus(connection, out SteamLinkS
 
 `SetNetworkConditions` on the transport, or the network conditions on the `UnityTransportManager`, has Steam simulate latency, jitter, loss, reordering and duplication on its own sends. Steam keeps these for the whole process, so they apply to every Steam connection in it, and latency set where both peers share a process counts twice in the round trip. A host's own client never crosses Steam, so test from a remote client. A transport that was never given conditions leaves Steam's simulation settings as the game set them, and one that was clears them when it shuts down.
 
+## Samples
+
+Import them from the package's **Samples** tab in the Package Manager. Import **Shared** first, since every other sample needs it. Each sample has a README with its scene and a test for two Steam accounts.
+
+| Sample | What it shows |
+|---|---|
+| Shared | Starting and running Steam for a sample scene, as a player or a game server, plus name tags, the player mover and the sample skin. |
+| Quick Start | Hosting, or joining a host by Steam ID, and moving a capsule. |
+| Lobbies | Creating, joining and leaving Steam lobbies, with invites, members, friends and lobby data. |
+| Lobby Browser | Searching public lobbies by distance and estimated ping. |
+| Dedicated Server | A Steam game server reached by fake IP, with a LAN and internet server browser. |
+| Voice Chat | Push to talk Steam voice, relayed through the server. |
+| Ban List | Kicking, banning and blacklisting players by Steam ID, and telling a refused player why. |
+| Quick Match | One-button matchmaking through invisible Steam lobbies, then a session for lobby members only. |
+
+Quick Start and Voice Chat need the Input System package, and spawn networked prefabs: after importing them, open **Tools > Nucleus** and press **Rebuild** beside Rebuild Network Prefab Collection. Quick Match's two scenes must be in the Build Profile; its panel's inspector offers to add them. The samples are adapted from maxkratt/nucleus-steamworksnet (MIT).
+
 ## Agent skill
 
 `Skills~/nucleus-steamworks` teaches an AI coding agent this transport: setup, addressing, dedicated servers, Steam IDs, refusing players, tickets and every setting. Copy the folder into your project's `.claude/skills/`, or your agent's equivalent, beside the Nucleus skills.

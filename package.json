@@ -8,5 +8,47 @@
     "name": "FirstGearGames",
     "url": "https://github.com/FirstGearGames"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "samples": [
+    {
+      "displayName": "Shared",
+      "description": "Starts Steam for a sample scene, and holds the name tags, the player mover and the sample skin. Every other sample needs it.",
+      "path": "Samples~/Shared"
+    },
+    {
+      "displayName": "Quick Start",
+      "description": "Host, or join a host by Steam ID, and move a capsule.",
+      "path": "Samples~/QuickStart"
+    },
+    {
+      "displayName": "Lobbies",
+      "description": "Create, join and leave Steam lobbies, with members, friends and lobby data.",
+      "path": "Samples~/Lobbies"
+    },
+    {
+      "displayName": "Lobby Browser",
+      "description": "Search public lobbies by distance and estimated ping.",
+      "path": "Samples~/LobbyBrowser"
+    },
+    {
+      "displayName": "Dedicated Server",
+      "description": "A Steam game server reached by fake IP, with a LAN and internet server browser.",
+      "path": "Samples~/DedicatedServer"
+    },
+    {
+      "displayName": "Voice Chat",
+      "description": "Push to talk Steam voice, relayed through the server.",
+      "path": "Samples~/VoiceChat"
+    },
+    {
+      "displayName": "Ban List",
+      "description": "Kick, ban and blacklist players by Steam ID, and tell a refused player why.",
+      "path": "Samples~/BanList"
+    },
+    {
+      "displayName": "Quick Match",
+      "description": "One-button matchmaking through invisible Steam lobbies, then a session for lobby members only.",
+      "path": "Samples~/QuickMatch"
+    }
+  ]
 }

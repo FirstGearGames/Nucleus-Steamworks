@@ -1,0 +1,31 @@
+{
+    "name": "Nucleus.Integrations.Unity.Steamworks.Samples.Editor",
+    "rootNamespace": "Nucleus.Integrations.Unity.Steamworks.Samples.Editor",
+    "references": [
+        "Nucleus.Integrations.Unity.Steamworks.Samples",
+        "Nucleus.Integrations.Unity.Editor",
+        "com.rlabrecque.steamworks.net"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.rlabrecque.steamworks.net",
+            "expression": "",
+            "define": "NUCLEUS_STEAMWORKS"
+        },
+        {
+            "name": "com.unity.inputsystem",
+            "expression": "",
+            "define": "NUCLEUS_SAMPLES_INPUT_SYSTEM"
+        }
+    ],
+    "noEngineReferences": false
+}
