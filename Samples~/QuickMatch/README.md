@@ -33,5 +33,3 @@ Distance widening cannot be tested on one machine.
 - `QuickMatchPanel.ApplyMergeResults` holds the rule that lets exactly one of two waiting players move.
 - `QuickMatchGame.TryStartClientFromLobby` reads the game server for a member that loaded after the host named it.
 - `QuickMatchGame.OnClientAdmission` is the lobby member check.
-
-This sample is adapted from maxkratt's [nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), under the MIT license.

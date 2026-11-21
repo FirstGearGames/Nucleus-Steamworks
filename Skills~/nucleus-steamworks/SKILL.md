@@ -94,5 +94,3 @@ Add a **Steam Host Migration** component beside the **Steam Transport**; having 
 - **Sends refused with `k_EResultLimitExceeded`.** Steam's queue for that connection is full, usually because **Send Rate Kilobytes Per Second** is below what the game sends. `SteamNetworkingTransport.SendFailed` reports each refused packet with Steam's reason.
 
 Every field, engine member, default and launch argument: [references/settings.md](references/settings.md).
-
-Adapted from [maxkratt/nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet) (MIT).

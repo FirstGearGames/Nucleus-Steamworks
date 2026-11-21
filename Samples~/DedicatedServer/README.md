@@ -30,5 +30,3 @@ A process here is either a Steam game server or a signed-in Steam player, never 
 - Steam grants a new fake address each time the server process starts, which is why the server publishes it in its listing rather than having it configured.
 - If the server does not appear in the internet list, give it a login token in `SteamBootstrap`, made for the App ID on Steam's game server account page. Some setups list only servers that logged on with one. A pasted address works either way.
 - The player count Steam lists comes from the auth sessions the server opens, and ticket authentication opens one for each player.
-
-This sample is adapted from maxkratt's [nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), under the MIT license.

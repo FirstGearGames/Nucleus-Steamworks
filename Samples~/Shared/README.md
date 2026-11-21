@@ -19,5 +19,3 @@ It also holds `PlayerNameTag`, which draws a player's Steam name over their obje
 Put a `SteamBootstrap` on an object in each scene that uses Steam, beside the **Steam Transport**. It belongs to its scene. Steam itself outlives a scene load, so the next scene's bootstrap adopts the Steam that is already running. Put `steam_appid.txt` (480 for testing) in the project folder, or beside the executable in a build.
 
 There is nothing to test on its own. Every other sample's two-account test runs it.
-
-This sample is adapted from maxkratt's [nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), under the MIT license.

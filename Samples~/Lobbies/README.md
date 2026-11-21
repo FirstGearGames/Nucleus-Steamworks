@@ -33,5 +33,3 @@ App ID 480 (Spacewar) is shared by every developer testing on it, so anyone can 
 - `LobbiesPanel.OnLobbyCreated` names the lobby's game server with `SteamNetworkingTransport.ServerSteamId`, the Steam ID the running server is reached at.
 - `LobbiesPanel.OnLobbyEntered` sets `SteamTransport.RemoteSteamId` to the lobby's game server, read with `GetLobbyGameServer` or from `LobbyGameCreated_t` while waiting, and then calls `StartClientAsync`.
 - `LobbiesPanel.OnConnectionLocalStateChanged` leaves the lobby once the member's client stops.
-
-This sample is adapted from maxkratt's [nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), under the MIT license.

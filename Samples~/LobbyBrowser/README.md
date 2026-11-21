@@ -30,5 +30,3 @@ The estimate runs through Valve's relays, so it is never zero, even for a lobby 
 - `LobbyBrowserPanel.OnLobbyMatchListReceived` estimates the ping for each lobby.
 - `LobbyBrowserPanel.TryPublishPingLocation` is the host's side of the estimate.
 - `LobbyBrowserPanel.OnLobbyCreated` names the lobby's game server with `SteamNetworkingTransport.ServerSteamId`.
-
-This sample is adapted from maxkratt's [nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), under the MIT license.

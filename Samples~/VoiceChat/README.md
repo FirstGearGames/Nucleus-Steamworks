@@ -26,5 +26,3 @@ Push to talk over Steam voice. Hold V, and Steam records and compresses your voi
 - Voice is not positional. Set the spatial blend of the `AudioSource` on the prefab to make it so.
 - `VoiceChatPanel` is the Quick Start panel (host, join by Steam ID, leave), so this sample needs nothing but Shared.
 - The sample's voice call, `VoiceChatRpc`, is a network type, so the sample's assembly has a `NetworkBundle` of its own in `Scripts/AssemblyInfo.cs`.
-
-This sample is adapted from maxkratt's [nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), under the MIT license.

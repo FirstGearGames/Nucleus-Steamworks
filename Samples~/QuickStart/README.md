@@ -24,5 +24,3 @@ The smallest Steam session. One player hosts, a friend pastes the host's Steam I
 - The `NetworkManager` object holds the whole setup: `UnityCoreManager`, `UnityTransportManager`, `SteamTransport` with **Addressing** on **Steam ID**, `SteamBootstrap`, `NetworkPlayerSpawner` and `QuickStartPanel`.
 - `QuickStartPanel.Join` is all a join takes. It sets `SteamTransport.RemoteSteamId` to the host's Steam ID and calls `StartClientAsync`.
 - `PlayerMover`, in Shared, moves the capsule only on the peer that controls it, and `NetworkTransform` replicates it to everyone else. Walk off the ground and the capsule falls, then drops back in above the middle.
-
-This sample is adapted from maxkratt's [nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), under the MIT license.

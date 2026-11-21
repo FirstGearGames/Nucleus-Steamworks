@@ -135,7 +135,7 @@ Import them from the package's **Samples** tab in the Package Manager. Import **
 | Ban List | Kicking, banning and blacklisting players by Steam ID, and telling a refused player why. |
 | Quick Match | One-button matchmaking through invisible Steam lobbies, then a session for lobby members only. |
 
-Quick Start and Voice Chat need the Input System package, and spawn networked prefabs: after importing them, open **Tools > Nucleus** and press **Rebuild** beside Rebuild Network Prefab Collection. Quick Match's two scenes must be in the Build Profile; its panel's inspector offers to add them. The samples are adapted from maxkratt/nucleus-steamworksnet (MIT).
+Quick Start and Voice Chat need the Input System package, and spawn networked prefabs: after importing them, open **Tools > Nucleus** and press **Rebuild** beside Rebuild Network Prefab Collection. Quick Match's two scenes must be in the Build Profile; its panel's inspector offers to add them.
 
 ## Agent skill
 
@@ -147,4 +147,4 @@ The play tests in `Tests` run over a real Steam connection. They need the Steam 
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Fake IP addressing, Steam IDs, the connecting filter, ticket authentication, send lanes and the inspector's install button are adapted from [maxkratt/nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), also MIT.
+MIT. See [LICENSE](LICENSE).

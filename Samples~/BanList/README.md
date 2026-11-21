@@ -34,5 +34,3 @@ Keeping players out by Steam ID. A host kicks, bans or blacklists a connected pl
 
 - Steam lobbies have no kick, so in a lobby game a ban only closes the link to the server. An honest player leaves the lobby when its link drops.
 - The filter runs before the ticket, so it sees only the player's Steam ID, not the owner of the game (`m_OwnerSteamID`). A banned owner can come back on another account that borrows the game through Family Sharing. A game that cares checks the owner in the ticket's result.
-
-This sample is adapted from maxkratt's [nucleus-steamworksnet](https://github.com/maxkratt/nucleus-steamworksnet), under the MIT license.
