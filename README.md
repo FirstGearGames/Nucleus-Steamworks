@@ -120,6 +120,10 @@ From code, `SteamNetworkingTransport.TryGetLinkStatus(connection, out SteamLinkS
 
 `SetNetworkConditions` on the transport, or the network conditions on the `UnityTransportManager`, has Steam simulate latency, jitter, loss, reordering and duplication on its own sends. Steam keeps these for the whole process, so they apply to every Steam connection in it, and latency set where both peers share a process counts twice in the round trip. A host's own client never crosses Steam, so test from a remote client. A transport that was never given conditions leaves Steam's simulation settings as the game set them, and one that was clears them when it shuts down.
 
+## Agent skill
+
+`Skills~/nucleus-steamworks` teaches an AI coding agent this transport: setup, addressing, dedicated servers, Steam IDs, refusing players, tickets and every setting. Copy the folder into your project's `.claude/skills/`, or your agent's equivalent, beside the Nucleus skills.
+
 ## Tests
 
 The play tests in `Tests` run over a real Steam connection. They need the Steam client running and signed in, and a `steam_appid.txt` holding an app id (480, Spacewar, for testing) in the project folder. They are skipped when Steam cannot be initialised. The dedicated server cases also log a game server on anonymously in the same process, and are skipped when it cannot. In a project that installs this as a package, list `com.firstgeargames.nucleus.steamworks` under `testables` in `Packages/manifest.json` so the Test Runner finds them.
