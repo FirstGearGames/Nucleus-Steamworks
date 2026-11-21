@@ -13,7 +13,7 @@
 
 This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either:
 
-- In the Package Manager, choose **Install package from git URL** and enter `https://github.com/FirstGearGames/Nucleus-Steamworks.git`. Add `#v1.2.0` to the end to pin a release.
+- In the Package Manager, choose **Install package from git URL** and enter `https://github.com/FirstGearGames/Nucleus-Steamworks.git`. Add `#v1.3.0` to the end to pin a release.
 - Or, in the Package Manager, choose **Install package from disk** and pick this folder's `package.json`, or add `"com.firstgeargames.nucleus.steamworks": "file:<path to this folder>"` to `Packages/manifest.json`. Edits made in Unity are saved straight back to this folder.
 - Or copy the folder into your project's `Packages` or `Assets` folder.
 

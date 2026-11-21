@@ -1,6 +1,6 @@
 {
   "name": "com.firstgeargames.nucleus.steamworks",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "displayName": "Nucleus Steamworks",
   "description": "Steam Networking Sockets transport for Nucleus: connect by Steam ID through Valve's relay or by IP address, with host migration through a Newfarm directory. Needs Nucleus in the project and Steamworks.NET installed as a package.",
   "unity": "6000.5",
