@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Nucleus.Connections;
+using Nucleus.Integrations.Newfarm;
 using Nucleus.Integrations.Unity.Managers.Core;
 using Nucleus.Integrations.Unity.Managers.Transports;
 using Nucleus.Integrations.Unity.Transports;
@@ -280,6 +281,45 @@ namespace Nucleus.Integrations.Unity.Tests
 
             serverTransport.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
             clientTransport.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+        }
+
+        /// <summary>
+        /// Under fake IP, a peer taking over a session names its fake IP address as where it is hosted, filed with IP addresses, and a
+        /// survivor rejoins it there, as host migration does after a handover.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(240000)]
+        public IEnumerator HostMigration_OnFakeIp_TheNewHostNamesItsFakeAddress_AndASurvivorJoinsIt()
+        {
+            UnityTransportManager serverTransportManager = CreatePeer("SteamGameServer", string.Empty);
+            UnityTransportManager clientTransportManager = CreatePeer("SteamClient", string.Empty);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport serverTransport = ConfigureTransport(serverTransportManager, isGameServer: true, SteamAddressing.FakeIp, ProbeFreeUdpPort());
+            SteamNetworkingTransport clientTransport = ConfigureTransport(clientTransportManager, isGameServer: false, SteamAddressing.FakeIp, ProbeFreeUdpPort());
+
+            SteamSessionHost hostingSessionHost = new(serverTransport);
+            Task<SessionHostResult> hostingTask = hostingSessionHost.StartHostingAsync(timeoutMilliseconds: (uint)(FakeIpWaitSeconds * 1_000f));
+
+            yield return WaitUntil(() => hostingTask.IsCompleted, FakeIpWaitSeconds);
+            Assert.AreEqual(SessionHostResult.Success, hostingTask.Result, "The new host could not start hosting under fake IP.");
+            Assert.IsNotNull(serverTransport.ServerFakeAddress, "Steam granted the new host no fake IP address.");
+            Assert.AreEqual(serverTransport.ServerFakeAddress, hostingSessionHost.HostedCredential, "The new host did not name its fake IP address as where it is hosted.");
+            Assert.AreEqual(SteamSessionHost.IpAddressAdapterTag, hostingSessionHost.AdapterTag, "A fake IP address was not filed with IP addresses.");
+
+            SteamSessionHost joiningSessionHost = new(clientTransport);
+            Task<SessionHostResult> joiningTask = joiningSessionHost.JoinAsync(hostingSessionHost.HostedCredential, timeoutMilliseconds: (uint)(MaximumWaitSeconds * 1_000f));
+
+            yield return WaitUntil(() => joiningTask.IsCompleted, MaximumWaitSeconds);
+            Assert.AreEqual(SessionHostResult.Success, joiningTask.Result, $"The survivor could not rejoin the new host at [{hostingSessionHost.HostedCredential}].");
+
+            TransportManager clientTransportManagerCore = clientTransport.CoreManager.TransportManager;
+
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore), MaximumWaitSeconds);
+            Assert.IsTrue(IsClientAuthenticated(clientTransportManagerCore), "The survivor reached the new host but was never admitted.");
         }
 
         /// <summary>

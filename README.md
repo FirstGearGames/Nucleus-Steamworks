@@ -85,7 +85,7 @@ To hand hosting to someone else on purpose, the host calls `steamHostMigration.T
 
 `steamHostMigration.Migration` also raises `Promoted` when this player takes over, `Rejoined` when it follows the session to a new host, and `Abandoned` when the session could not be carried on. A player joining after a handover needs the new host's Steam ID, or can call `steamHostMigration.JoinSessionAsync(sessionId)` with the `SessionId` read on any player already in it.
 
-When players connect by IP, the host advertises **Hosted Address** on the **Steam Host Migration**. Leave it empty to use the bind address, or this machine's own IPv4 address, which only reaches players on the same network. A host reached through a router sets it to its public address with a forwarded port.
+When players connect by IP, the host advertises **Hosted Address** on the **Steam Host Migration**. Leave it empty to use the bind address, or this machine's own IPv4 address, which only reaches players on the same network. A host reached through a router sets it to its public address with a forwarded port. When players connect by fake IP, a player taking over asks Steam for a fake IP address of its own and advertises that, so **Hosted Address** is not used.
 
 ### Upgrading from 1.0.0
 

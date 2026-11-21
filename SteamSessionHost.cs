@@ -1,5 +1,6 @@
 // Matches Steamworks.NET's own switch, so this compiles out wherever Steamworks.NET does, not only where it is missing.
 #if NUCLEUS_STEAMWORKS && !DISABLESTEAMWORKS && (UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX || UNITY_STANDALONE_OSX || UNITY_ANDROID || STEAMWORKS_WIN || STEAMWORKS_LIN_OSX)
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
@@ -23,14 +24,15 @@ namespace Nucleus.Integrations.Unity.Transports
     /// leaving.
     /// The credential follows <see cref="SteamNetworkingTransport.Addressing"/>. By Steam ID it is the hosting account's Steam ID, so
     /// nobody needs an address. By IP it is an address and port, which is <see cref="HostedAddress"/> when set and otherwise this
-    /// machine's own IPv4 address, which only reaches peers on the same network.
-    /// Each addressing files its credentials under its own tag, so a peer never tries to read a Steam ID as an address.
+    /// machine's own IPv4 address, which only reaches peers on the same network. By fake IP it is the address Steam grants the new host.
+    /// Steam IDs are filed under one tag and addresses, real or fake, under another, so a peer never tries to read a Steam ID as an
+    /// address; a fake IP address is dialled exactly as a real one is.
     /// </remarks>
     /// <seealso cref="SteamNetworkingTransport"/>
     public sealed class SteamSessionHost : ISessionHost
     {
         /// <inheritdoc/>
-        public string AdapterTag => _steamNetworkingTransport.Addressing is SteamAddressing.IpAddress ? IpAddressAdapterTag : SteamIdAdapterTag;
+        public string AdapterTag => _steamNetworkingTransport.Addressing is SteamAddressing.SteamId ? SteamIdAdapterTag : IpAddressAdapterTag;
 
         /// <inheritdoc/>
         /// <remarks>
@@ -77,7 +79,7 @@ namespace Nucleus.Integrations.Unity.Transports
         public const string SteamIdAdapterTag = "steam-id";
 
         /// <summary>
-        /// The tag a session addressed by IP address is filed under with a directory.
+        /// The tag a session addressed by IP address or fake IP address is filed under with a directory.
         /// </summary>
         public const string IpAddressAdapterTag = "steam-ip";
 
@@ -90,6 +92,11 @@ namespace Nucleus.Integrations.Unity.Transports
         /// Where the session this peer is hosting can be reached, set when hosting starts or when first asked for.
         /// </summary>
         private string _hostedCredential = string.Empty;
+
+        /// <summary>
+        /// How often hosting by fake IP checks whether Steam has granted the address.
+        /// </summary>
+        private const int FakeIpPollIntervalMilliseconds = 5;
 
         /// <summary>
         /// Creates an adapter over a Steam transport.
@@ -108,16 +115,35 @@ namespace Nucleus.Integrations.Unity.Transports
 
         /// <inheritdoc/>
         /// <remarks>
-        /// Opening a listen socket is immediate, so the budget is not needed: Steam either opens one or refuses on the spot.
+        /// Opening a listen socket is immediate: Steam either opens one or refuses on the spot. Under fake IP the budget is spent waiting
+        /// for Steam to grant the address, which it does only once the server is listening; a grant that does not arrive in time stops the
+        /// server again.
         /// </remarks>
         public async Task<SessionHostResult> StartHostingAsync(uint timeoutMilliseconds)
         {
+            bool isFakeIp = _steamNetworkingTransport.Addressing is SteamAddressing.FakeIp;
+            string hostedCredential = string.Empty;
+
             // Named before the server starts, so a peer that cannot say where it is never stands up a session nobody can reach.
-            if (!TryGetHostedCredential(out string hostedCredential))
+            if (!isFakeIp && !TryGetHostedCredential(out hostedCredential))
                 return SessionHostResult.LocalFailure;
 
             if (await _steamNetworkingTransport.ConnectAsync(Invoker.Server) is not ConnectionStateChangeResult.Success)
                 return SessionHostResult.LocalFailure;
+
+            if (isFakeIp)
+            {
+                hostedCredential = await AwaitServerFakeAddressAsync(timeoutMilliseconds);
+
+                if (hostedCredential.Length == 0)
+                {
+                    Logger<SteamSessionHost>.LogError($"Steam granted this peer no fake IP address within [{timeoutMilliseconds}] ms, so it cannot host the session.");
+
+                    await _steamNetworkingTransport.DisconnectLocalConnectionAsync(Invoker.Server);
+
+                    return SessionHostResult.LocalFailure;
+                }
+            }
 
             _hostedCredential = hostedCredential;
 
@@ -137,7 +163,7 @@ namespace Nucleus.Integrations.Unity.Transports
             // Whatever this peer was in is left before another is tried, so a retry never builds on the attempt before it.
             await LeaveAsync();
 
-            if (_steamNetworkingTransport.Addressing is SteamAddressing.IpAddress)
+            if (_steamNetworkingTransport.Addressing is not SteamAddressing.SteamId)
                 _steamNetworkingTransport.RemoteAddress = credential;
             else if (ulong.TryParse(credential, out ulong remoteSteamId))
                 _steamNetworkingTransport.RemoteSteamId = remoteSteamId;
@@ -188,17 +214,38 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
+        /// Waits for Steam to grant this peer's listening server its fake IP address.
+        /// </summary>
+        /// <param name="timeoutMilliseconds">The longest to wait.</param>
+        /// <returns>The address, or empty when none arrived in time or Steam shut down.</returns>
+        /// <remarks>The grant arrives through Steam's callback pump on the main thread, which runs between the waits.</remarks>
+        private async Task<string> AwaitServerFakeAddressAsync(uint timeoutMilliseconds)
+        {
+            long deadlineTimestamp = Stopwatch.GetTimestamp() + timeoutMilliseconds * Stopwatch.Frequency / 1000;
+
+            while (_steamNetworkingTransport.ServerFakeAddress is null && Stopwatch.GetTimestamp() < deadlineTimestamp && !SteamSockets.IsShutDown(_steamNetworkingTransport.IsGameServer))
+                await Task.Delay(FakeIpPollIntervalMilliseconds);
+
+            return _steamNetworkingTransport.ServerFakeAddress ?? string.Empty;
+        }
+
+        /// <summary>
         /// Names where another peer reaches this one's server once it is listening.
         /// </summary>
-        /// <param name="hostedCredential">This peer's Steam ID, or the address and port it listens on.</param>
+        /// <param name="hostedCredential">This peer's Steam ID, its fake IP address, or the address and port it listens on.</param>
         /// <returns><see langword="true"/> when there is something another peer could be pointed at.</returns>
         private bool TryGetHostedCredential(out string hostedCredential)
         {
-            if (_steamNetworkingTransport.Addressing is not SteamAddressing.IpAddress)
+            switch (_steamNetworkingTransport.Addressing)
             {
-                hostedCredential = SteamSockets.GetSteamId(_steamNetworkingTransport.IsGameServer).ToString();
+                case SteamAddressing.SteamId:
+                    hostedCredential = SteamSockets.GetSteamId(_steamNetworkingTransport.IsGameServer).ToString();
 
-                return true;
+                    return true;
+                case SteamAddressing.FakeIp:
+                    hostedCredential = _steamNetworkingTransport.ServerFakeAddress ?? string.Empty;
+
+                    return hostedCredential.Length > 0;
             }
 
             string address = HostedAddress;

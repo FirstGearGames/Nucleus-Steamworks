@@ -14,7 +14,8 @@ namespace Nucleus.Integrations.Unity.Transports
     /// Put it beside a <see cref="SteamTransport"/>; having it there is what turns host migration on. A game then starts and joins as it
     /// would without it: a server opens a session with the directory once it is running, and every client that authenticates is told
     /// which session it is in, so a peer that joined by Steam ID or address survives losing that host. A host addressed by Steam ID
-    /// publishes its Steam ID; one addressed by IP publishes <see cref="HostedAddress"/>, or its bind address when that is empty.
+    /// publishes its Steam ID; one addressed by IP publishes <see cref="HostedAddress"/>, or its bind address when that is empty; one
+    /// addressed by fake IP publishes the fake IP address Steam grants it when it takes over.
     /// Sessions need Nucleus Pro. This compiles in both editions, but with a Free <c>Nucleus.dll</c>
     /// <see cref="Nucleus.Managers.Server.ServerManager.IsHostMigrationAvailable"/> reads <see langword="false"/> and every session call
     /// returns <see langword="false"/>.
