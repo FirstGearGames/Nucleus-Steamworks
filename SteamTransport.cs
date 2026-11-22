@@ -192,11 +192,11 @@ namespace Nucleus.Integrations.Unity.Transports
         [Tooltip("Rate Steam sends at on each connection, in kilobytes a second. Steam's own is 256, slower than nearly any player's line. 0 keeps Steam's own.")]
         private uint _sendRateKilobytesPerSecond = DefaultSendRateKilobytesPerSecond;
         /// <summary>
-        /// Whether a link addressed by Steam ID is carried over Valve's relay network only.
+        /// Whether a link addressed by Steam ID or by fake IP is carried over Valve's relay network only.
         /// </summary>
         [SerializeField]
-        [Tooltip("Carry Steam ID links over Valve's relay only, so no player learns another's IP address. Off lets Steam connect players directly when their Steam settings allow it, which can lower ping.")]
-        private bool _isRelayOnlyEnabled;
+        [Tooltip("Carry Steam ID and fake IP links over Valve's relay only, so no player learns another's IP address. Off lets Steam connect players directly when their Steam settings allow it, which can lower ping for players near each other.")]
+        private bool _isRelayOnlyEnabled = true;
         /// <summary>
         /// Whether a client is admitted only once Steam has confirmed its auth session ticket.
         /// </summary>

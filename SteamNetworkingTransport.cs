@@ -129,13 +129,22 @@ namespace Nucleus.Integrations.Unity.Transports
         public uint ConnectTimeoutMilliseconds { get; set; }
 
         /// <summary>
-        /// Whether a link addressed by Steam ID is carried over Valve's relay network only, so no peer learns another's IP address.
+        /// Whether a link addressed by Steam ID or by fake IP is carried over Valve's relay network only, so no peer learns another's IP
+        /// address. On by default.
         /// </summary>
         /// <remarks>
-        /// Off lets Steam try a direct route between two players when each player's Steam settings allow it, which can lower ping. Read
-        /// when the server starts and when the client connects, and used only under <see cref="SteamAddressing.SteamId"/>.
+        /// <para>
+        /// Steam then shares no ICE candidates, the addresses a direct route is found through. Off lets Steam try a direct route between two
+        /// peers when each player's Steam settings allow it, which can lower ping: a relayed packet goes by way of Valve's relays, so two
+        /// players close to each other but far from a relay pay about twice their ping to the nearest relay, where a direct route would
+        /// not.
+        /// </para>
+        /// <para>
+        /// Read when the server starts and when the client connects. Unused under <see cref="SteamAddressing.IpAddress"/>, which dials the
+        /// address it is given.
+        /// </para>
         /// </remarks>
-        public bool IsRelayOnlyEnabled { get; set; }
+        public bool IsRelayOnlyEnabled { get; set; } = true;
 
         /// <summary>
         /// Whether the server tells every client the Steam ID of every other client, so each client's

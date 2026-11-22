@@ -30,7 +30,7 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 |---|---|---|
 | Addressing | Steam ID | **Steam ID** goes through Valve's relay. **IP Address** listens on a port and connects to an address. **Fake IP** connects to an address Steam grants the server, over Valve's relay. |
 | Remote Steam Id | 0 | Who a client connects to by Steam ID. 0, or your own ID, joins your own server. |
-| Is Relay Only Enabled | off | Carry Steam ID links over Valve's relay only, so no player learns another's IP address. Off lets Steam connect two players directly when their Steam settings allow it, which can lower ping. |
+| Is Relay Only Enabled | on | Carry Steam ID and fake IP links over Valve's relay only, so no player learns another's IP address. Off lets Steam connect two players directly when their Steam settings allow it, which can lower ping. See **Relay only** below for what it costs. |
 | Remote Address | empty | Who a client connects to by IP or fake IP, optionally with a port such as `203.0.113.7:7777`. Host names are not looked up. |
 | Port | 7777 | The port the server listens on by IP, and the one a client uses when its address names none. |
 | Bind Address | empty | The local address the server listens on by IP. Empty listens on every interface. |
@@ -45,6 +45,8 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 `RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start. While a server runs, the inspector shows where clients reach it, its Steam ID, fake IP address or port, with a **Copy** button.
 
 The transport also reads three launch arguments, when your game calls `ApplyCommandLineArguments()` on it: `-address` sets `RemoteAddress`, `-steamid` sets `RemoteSteamId`, and `-port` sets the port.
+
+**Relay only.** Links addressed by Steam ID or by fake IP are peer-to-peer links, and Steam can move one to a direct route between two players, which tells each of them the other's IP address. **Is Relay Only Enabled** is on by default, so Steam never looks for a direct route and every packet goes by way of Valve's relays. That costs latency when the players are close to each other but far from a relay: each packet travels to the nearest relay and back out, so their ping becomes about twice their ping to that relay, where a direct route between neighbours could take a few milliseconds. Between players far apart, Valve's network often matches or beats the direct route. Turn it off where players may learn each other's addresses, such as a game among friends. Scenes saved before relay only became the default keep the value they were saved with.
 
 ## Dedicated servers
 

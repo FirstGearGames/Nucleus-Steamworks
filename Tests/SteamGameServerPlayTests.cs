@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Nucleus.Connections;
@@ -413,6 +415,80 @@ namespace Nucleus.Integrations.Unity.Tests
         }
 
         /// <summary>
+        /// By default a link addressed by Steam ID or by fake IP shares no ICE candidates, the addresses a direct route is found through, so
+        /// it can only ride Valve's relay and no player learns another's IP address: Steam reads the setting back as disabled on the
+        /// server's listen socket and on the client's link, and a transport set up from code starts with relay only on as well.
+        /// </summary>
+        /// <param name="addressing">How the client reaches the game server.</param>
+        /// <returns>The coroutine driving the case.</returns>
+        /// <remarks>
+        /// Both ends share this process, where Steam carries a link between them through memory whatever its settings, so the route proves
+        /// nothing here; what each end opened with is read back instead.
+        /// </remarks>
+        [UnityTest]
+        [Timeout(240000)]
+        public IEnumerator RelayOnly_ByDefault_IsAppliedToBothEndsOfAPeerToPeerLink([Values(SteamAddressing.SteamId, SteamAddressing.FakeIp)] SteamAddressing addressing)
+        {
+            UnityTransportManager serverTransportManager = CreatePeer("SteamGameServer", string.Empty);
+            UnityTransportManager clientTransportManager = CreatePeer("SteamClient", string.Empty);
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport serverTransport = ConfigureTransport(serverTransportManager, isGameServer: true, addressing, ProbeFreeUdpPort());
+            SteamNetworkingTransport clientTransport = ConfigureTransport(clientTransportManager, isGameServer: false, addressing, ProbeFreeUdpPort());
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+
+            clientTransport.RemoteSteamId = serverTransport.ServerSteamId;
+
+            // A fake IP link dials the address Steam grants the server instead, once it has.
+            if (addressing is SteamAddressing.FakeIp)
+            {
+                yield return WaitUntil(() => serverTransport.ServerFakeAddress is not null, FakeIpWaitSeconds);
+
+                if (serverTransport.ServerFakeAddress is null)
+                    Assert.Inconclusive("Steam granted the game server no fake IP address in time, so the client had nowhere to connect.");
+
+                clientTransport.RemoteAddress = serverTransport.ServerFakeAddress;
+            }
+
+            TransportManager serverTransportManagerCore = serverTransport.CoreManager.TransportManager;
+            TransportManager clientTransportManagerCore = clientTransport.CoreManager.TransportManager;
+
+            int serverReceivedValue = -1;
+            int clientReceivedValue = -1;
+
+            void OnServerReceivedProbe(in MessageContext messageContext, SteamProbeMessage steamProbeMessage) => serverReceivedValue = steamProbeMessage.Value;
+            void OnClientReceivedProbe(in MessageContext messageContext, SteamProbeMessage steamProbeMessage) => clientReceivedValue = steamProbeMessage.Value;
+
+            serverTransport.CoreManager.MessageManager.RegisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
+            clientTransport.CoreManager.MessageManager.RegisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 1, MaximumWaitSeconds);
+            Assert.IsTrue(IsClientAuthenticated(clientTransportManagerCore), $"The client never reached the game server by [{addressing}].");
+
+            clientTransportManagerCore.TryGetServerConnection(out Connection serverConnection);
+            serverConnection.SendMessage(Channel.Reliable, new SteamProbeMessage { Value = 35 });
+            serverTransport.CoreManager.ServerManager.SendMessage(Channel.Reliable, new SteamProbeMessage { Value = 36 });
+
+            yield return WaitUntil(() => serverReceivedValue == 35 && clientReceivedValue == 36, MaximumWaitSeconds);
+            Assert.AreEqual(35, serverReceivedValue, $"The client's message never reached the game server by [{addressing}].");
+            Assert.AreEqual(36, clientReceivedValue, $"The game server's message never reached the client by [{addressing}].");
+
+            serverTransport.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
+            clientTransport.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+
+            HSteamListenSocket listenSocket = (HSteamListenSocket)typeof(SteamNetworkingServerSocket).GetField("_listenSocket", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(serverTransport.ServerSocket);
+            HSteamNetConnection clientSteamConnection = (HSteamNetConnection)typeof(SteamNetworkingClientSocket).GetField("_steamConnection", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(clientTransport.ClientSocket);
+
+            Assert.AreEqual(Constants.k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Disable, GetIceSetting(isGameServer: true, ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_ListenSocket, listenSocket.m_HSteamListenSocket), $"The game server's listen socket lets Steam share ICE candidates by [{addressing}].");
+            Assert.AreEqual(Constants.k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Disable, GetIceSetting(isGameServer: false, ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Connection, clientSteamConnection.m_HSteamNetConnection), $"The client's link lets Steam share ICE candidates by [{addressing}].");
+            Assert.IsTrue(new SteamNetworkingTransport().IsRelayOnlyEnabled, "A transport set up from code allows direct connections by default.");
+        }
+
+        /// <summary>
         /// Creates a peer with a core manager, transport manager and Steam transport component, and activates it.
         /// </summary>
         /// <param name="objectName">The peer's object name.</param>
@@ -445,6 +521,36 @@ namespace Nucleus.Integrations.Unity.Tests
             steamNetworkingTransport.Configuration.Port = port;
 
             return steamNetworkingTransport;
+        }
+
+        /// <summary>
+        /// Returns which ICE candidates Steam shares on a listen socket or a connection, as its
+        /// <c>k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable</c> setting reads, set there or inherited.
+        /// </summary>
+        /// <param name="isGameServer">True for the game server interface.</param>
+        /// <param name="scope">Whether <paramref name="handle"/> names a listen socket or a connection.</param>
+        /// <param name="handle">The listen socket's or the connection's handle.</param>
+        /// <returns>The setting.</returns>
+        private static int GetIceSetting(bool isGameServer, ESteamNetworkingConfigScope scope, uint handle)
+        {
+            System.IntPtr valuePointer = Marshal.AllocHGlobal(sizeof(int));
+
+            try
+            {
+                ulong valueBytes = sizeof(int);
+                ESteamNetworkingConfigValue configValue = ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable;
+
+                if (isGameServer)
+                    SteamGameServerNetworkingUtils.GetConfigValue(configValue, scope, (System.IntPtr)handle, out ESteamNetworkingConfigDataType _, valuePointer, ref valueBytes);
+                else
+                    SteamNetworkingUtils.GetConfigValue(configValue, scope, (System.IntPtr)handle, out ESteamNetworkingConfigDataType _, valuePointer, ref valueBytes);
+
+                return Marshal.ReadInt32(valuePointer);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(valuePointer);
+            }
         }
 
         /// <summary>

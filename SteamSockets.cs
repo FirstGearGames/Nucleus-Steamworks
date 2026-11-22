@@ -211,8 +211,8 @@ namespace Nucleus.Integrations.Unity.Transports
                 options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, sendRateBytesPerSecond));
             }
 
-            // Only a Steam ID link tries a direct route; an IP address is dialled as given, and a fake IP always rides the relay.
-            if (steamNetworkingTransport.IsRelayOnlyEnabled && steamNetworkingTransport.Addressing is SteamAddressing.SteamId)
+            // A Steam ID or fake IP link is a peer-to-peer link, which Steam may otherwise move to a direct route; an IP address is dialled as given.
+            if (steamNetworkingTransport.IsRelayOnlyEnabled && steamNetworkingTransport.Addressing is SteamAddressing.SteamId or SteamAddressing.FakeIp)
                 options.Add(CreateInt32Option(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable, Constants.k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Disable));
 
             if (isServer)
