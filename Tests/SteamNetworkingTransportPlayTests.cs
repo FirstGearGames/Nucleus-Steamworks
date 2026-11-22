@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using NUnit.Framework;
@@ -720,16 +721,243 @@ namespace Nucleus.Integrations.Unity.Tests
         }
 
         /// <summary>
+        /// By default one Steam account holds one connection: a second client signed in to the same account is refused while the first
+        /// keeps its link, and the second joins once the cap is lifted.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator SteamIdCap_ByDefault_RefusesASecondConnectionFromOneAccount_UntilLifted()
+        {
+            ushort port = ProbeFreeUdpPort();
+
+            UnityTransportManager serverTransportManager = CreatePeer("SteamServer", string.Empty);
+            UnityTransportManager firstClientTransportManager = CreatePeer("SteamFirstClient", $"127.0.0.1:{port}");
+            UnityTransportManager secondClientTransportManager = CreatePeer("SteamSecondClient", $"127.0.0.1:{port}");
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(firstClientTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(secondClientTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport serverTransport = UseIpAddressing(serverTransportManager, port);
+            SteamNetworkingTransport firstClientTransport = UseIpAddressing(firstClientTransportManager, port);
+            SteamNetworkingTransport secondClientTransport = UseIpAddressing(secondClientTransportManager, port);
+            TransportManager serverTransportManagerCore = serverTransport.CoreManager.TransportManager;
+            TransportManager firstClientTransportManagerCore = firstClientTransport.CoreManager.TransportManager;
+            TransportManager secondClientTransportManagerCore = secondClientTransport.CoreManager.TransportManager;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+            yield return WaitForTask(firstClientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(firstClientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 1);
+            Assert.IsTrue(IsClientAuthenticated(firstClientTransportManagerCore), "The first client never joined.");
+
+            // The refused client logs that it could not connect.
+            LogAssert.ignoreFailingMessages = true;
+
+            yield return WaitForTask(secondClientTransportManager.StartClientAsync());
+            yield return new WaitForSecondsRealtime(1f);
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.IsFalse(IsClientAuthenticated(secondClientTransportManagerCore), "A second connection from one Steam account joined under the default cap of one.");
+            Assert.AreEqual(1, serverTransportManagerCore.ActiveConnections.Count, "The server does not hold exactly the first client after refusing the second.");
+
+            // Refusing the second client left the first one's link alone.
+            yield return AssertProbesCrossEachWay(serverTransport, firstClientTransport, value: 51);
+
+            serverTransport.MaximumConnectionsPerSteamId = SteamNetworkingTransport.UnsetMaximumConnectionsPerSteamId;
+
+            yield return WaitForTask(secondClientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(secondClientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 2);
+            Assert.IsTrue(IsClientAuthenticated(secondClientTransportManagerCore), "The second client never joined once the cap was lifted.");
+            Assert.AreEqual(2, serverTransportManagerCore.ActiveConnections.Count, "The server does not hold both clients once the cap was lifted.");
+
+            yield return AssertProbesCrossEachWay(serverTransport, secondClientTransport, value: 53);
+        }
+
+        /// <summary>
+        /// While a cap is set, a connection whose Steam ID Steam could not authenticate is refused, since it cannot be counted, and the
+        /// client already connected keeps its link.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        /// <remarks>
+        /// Steam authenticates every link this machine can open, even with <c>k_ESteamNetworkingConfig_IP_AllowWithoutAuth</c> set, so the
+        /// arrival is Steam's report of a connected link with its unauthenticated flag set, handed to the server socket as Steam's own
+        /// callback would hand it. The cap is two, so counting alone would let the arrival in beside the client already connected.
+        /// </remarks>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator SteamIdCap_AConnectionSteamCouldNotAuthenticate_IsRefused_AndNobodyIsClosed()
+        {
+            const uint UnissuedSteamConnectionHandle = uint.MaxValue;
+
+            ulong ownSteamId = SteamUser.GetSteamID().m_SteamID;
+            ushort port = ProbeFreeUdpPort();
+
+            UnityTransportManager serverTransportManager = CreatePeer("SteamServer", string.Empty);
+            UnityTransportManager clientTransportManager = CreatePeer("SteamClient", $"127.0.0.1:{port}");
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport serverTransport = UseIpAddressing(serverTransportManager, port);
+            SteamNetworkingTransport clientTransport = UseIpAddressing(clientTransportManager, port);
+            serverTransport.MaximumConnectionsPerSteamId = 2;
+            TransportManager serverTransportManagerCore = serverTransport.CoreManager.TransportManager;
+            TransportManager clientTransportManagerCore = clientTransport.CoreManager.TransportManager;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 1);
+            Assert.AreEqual(1, serverTransportManagerCore.ActiveConnections.Count, "The server does not hold the client.");
+
+            SteamNetConnectionStatusChangedCallback_t statusChanged = default;
+            statusChanged.m_hConn = new(UnissuedSteamConnectionHandle);
+            statusChanged.m_info.m_hListenSocket = (HSteamListenSocket)typeof(SteamNetworkingServerSocket).GetField("_listenSocket", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(serverTransport.ServerSocket);
+            statusChanged.m_info.m_eState = ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected;
+            statusChanged.m_info.m_nFlags = Constants.k_nSteamNetworkConnectionInfoFlags_Unauthenticated;
+            statusChanged.m_info.m_identityRemote.SetSteamID64(ownSteamId);
+
+            typeof(SteamNetworkingServerSocket).GetMethod("OnConnectionStatusChanged", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(serverTransport.ServerSocket, new object[] { statusChanged });
+
+            // An admitted arrival would be applied on the server's next receive pass.
+            yield return new WaitForSecondsRealtime(0.5f);
+
+            Assert.AreEqual(1, serverTransportManagerCore.ActiveConnections.Count, "The server admitted a connection Steam could not authenticate.");
+
+            yield return AssertProbesCrossEachWay(serverTransport, clientTransport, value: 71);
+        }
+
+        /// <summary>
+        /// A client that vanishes without closing its link, as a crashed game does, holds its account's place only until Steam times the
+        /// link out: the same account is refused until then and joins after, and how long that took is logged.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        /// <remarks>
+        /// The crashing client reaches the server through a <see cref="SteamUdpRelay"/> that is cut at the crash, so nothing it sends
+        /// afterwards, its close included, arrives. The returning client signs in to the same account and dials the server directly.
+        /// </remarks>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator SteamIdCap_ACrashedClientsLink_HoldsItsPlaceOnlyUntilSteamTimesItOut()
+        {
+            const float ReturnWaitSeconds = 40f;
+            const float RetryIntervalSeconds = 1f;
+            const float TimeoutMarginSeconds = 5f;
+
+            ushort port = ProbeFreeUdpPort();
+
+            SteamUdpRelay steamUdpRelay = NewInactiveObject("SteamUdpRelay").AddComponent<SteamUdpRelay>();
+            steamUdpRelay.Begin(port);
+
+            UnityTransportManager serverTransportManager = CreatePeer("SteamServer", string.Empty);
+            UnityTransportManager crashingClientTransportManager = CreatePeer("SteamCrashingClient", $"127.0.0.1:{steamUdpRelay.Port}");
+            UnityTransportManager returningClientTransportManager = CreatePeer("SteamReturningClient", $"127.0.0.1:{port}");
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(crashingClientTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(returningClientTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport serverTransport = UseIpAddressing(serverTransportManager, port);
+            SteamNetworkingTransport crashingClientTransport = UseIpAddressing(crashingClientTransportManager, port);
+            SteamNetworkingTransport returningClientTransport = UseIpAddressing(returningClientTransportManager, port);
+            TransportManager serverTransportManagerCore = serverTransport.CoreManager.TransportManager;
+            TransportManager crashingClientTransportManagerCore = crashingClientTransport.CoreManager.TransportManager;
+            TransportManager returningClientTransportManagerCore = returningClientTransport.CoreManager.TransportManager;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+            yield return WaitForTask(crashingClientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(crashingClientTransportManagerCore) && serverTransportManagerCore.ActiveConnections.Count == 1);
+            Assert.AreEqual(1, serverTransportManagerCore.ActiveConnections.Count, "The server does not hold the client before it crashes.");
+
+            Connection crashedClientConnection = null;
+            float releasedSeconds = -1f;
+
+            foreach (Connection activeConnection in serverTransportManagerCore.ActiveConnections)
+                crashedClientConnection = activeConnection;
+
+            // Compared while the departure is raised, before the pool can hand the instance to the returning client.
+            void OnClientDisconnecting(Connection connection)
+            {
+                if (ReferenceEquals(connection, crashedClientConnection))
+                    releasedSeconds = Time.realtimeSinceStartup;
+            }
+
+            serverTransport.CoreManager.ServerManager.ClientDisconnecting += OnClientDisconnecting;
+
+            steamUdpRelay.Cut();
+            Object.Destroy(crashingClientTransportManager.gameObject);
+
+            float crashedSeconds = Time.realtimeSinceStartup;
+            uint refusedAttemptCount = 0;
+
+            // Each refused attempt logs that the client could not connect.
+            LogAssert.ignoreFailingMessages = true;
+
+            while (!IsClientAuthenticated(returningClientTransportManagerCore) && Time.realtimeSinceStartup < crashedSeconds + ReturnWaitSeconds)
+            {
+                yield return WaitForTask(returningClientTransportManager.StartClientAsync());
+                yield return WaitUntil(() => IsClientAuthenticated(returningClientTransportManagerCore), RetryIntervalSeconds);
+
+                if (!IsClientAuthenticated(returningClientTransportManagerCore) && releasedSeconds < 0f)
+                    refusedAttemptCount++;
+            }
+
+            LogAssert.ignoreFailingMessages = false;
+
+            float joinedSeconds = Time.realtimeSinceStartup;
+            int connectedTimeoutMilliseconds = GetSteamsGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutConnected);
+
+            // A client let in at once leaves the crashed link to time out on its own, which the measurement still waits for.
+            yield return WaitUntil(() => releasedSeconds >= 0f, connectedTimeoutMilliseconds / 1000f + TimeoutMarginSeconds);
+
+            serverTransport.CoreManager.ServerManager.ClientDisconnecting -= OnClientDisconnecting;
+
+            Debug.Log($"[SteamIdCap] A crashed client's link held its account's place for [{releasedSeconds - crashedSeconds:F1}] s against Steam's connected timeout of [{connectedTimeoutMilliseconds}] ms. The same account was refused [{refusedAttemptCount}] times and joined [{joinedSeconds - crashedSeconds:F1}] s after the crash.");
+
+            Assert.Greater(refusedAttemptCount, 0u, "The same account joined while the crashed client's link still held its place.");
+            Assert.GreaterOrEqual(releasedSeconds, 0f, "The server never let the crashed client's link go.");
+            Assert.LessOrEqual(releasedSeconds - crashedSeconds, connectedTimeoutMilliseconds / 1000f + TimeoutMarginSeconds, "The crashed client's link held its place well past Steam's connected timeout.");
+            Assert.IsTrue(IsClientAuthenticated(returningClientTransportManagerCore), "The same account never joined once the crashed client's link was let go.");
+
+            yield return AssertProbesCrossEachWay(serverTransport, returningClientTransport, value: 61);
+        }
+
+        /// <summary>
+        /// Creates an active peer with a core manager, transport manager and Steam transport component, its transport not yet added.
+        /// </summary>
+        /// <param name="objectName">The peer's object name.</param>
+        /// <param name="remoteAddress">Where its client connects, empty for a server.</param>
+        /// <returns>Its transport manager.</returns>
+        private UnityTransportManager CreatePeer(string objectName, string remoteAddress)
+        {
+            GameObject peerObject = NewInactiveObject(objectName);
+            peerObject.AddComponent<UnityCoreManager>();
+            UnityTransportManager unityTransportManager = peerObject.AddComponent<UnityTransportManager>();
+            peerObject.AddComponent<SteamTransport>().RemoteAddress = remoteAddress;
+            peerObject.SetActive(true);
+
+            return unityTransportManager;
+        }
+
+        /// <summary>
         /// Returns the send latency Steam simulates for the whole process on the player's interface, in milliseconds.
         /// </summary>
-        private static int GetSteamsSimulatedLatencyMilliseconds()
+        private static int GetSteamsSimulatedLatencyMilliseconds() => GetSteamsGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketLag_Send);
+
+        /// <summary>
+        /// Returns one of Steam's whole-number settings for the whole process on the player's interface.
+        /// </summary>
+        /// <param name="configValue">The setting.</param>
+        /// <returns>Its value.</returns>
+        private static int GetSteamsGlobalInt32(ESteamNetworkingConfigValue configValue)
         {
             System.IntPtr valuePointer = Marshal.AllocHGlobal(sizeof(int));
 
             try
             {
                 ulong valueBytes = sizeof(int);
-                SteamNetworkingUtils.GetConfigValue(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_FakePacketLag_Send, ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Global, System.IntPtr.Zero, out ESteamNetworkingConfigDataType _, valuePointer, ref valueBytes);
+                SteamNetworkingUtils.GetConfigValue(configValue, ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Global, System.IntPtr.Zero, out ESteamNetworkingConfigDataType _, valuePointer, ref valueBytes);
 
                 return Marshal.ReadInt32(valuePointer);
             }
@@ -737,6 +965,43 @@ namespace Nucleus.Integrations.Unity.Tests
             {
                 Marshal.FreeHGlobal(valuePointer);
             }
+        }
+
+        /// <summary>
+        /// Sends a probe from a client to its server and one back to that client, and fails the case unless both arrive.
+        /// </summary>
+        /// <param name="serverTransport">The server's transport.</param>
+        /// <param name="clientTransport">The client's transport.</param>
+        /// <param name="value">The value the client sends; the server answers with the next one.</param>
+        /// <returns>The coroutine doing the exchange.</returns>
+        /// <remarks>The server answers over the Connection the probe arrived on, so only that client is sent to.</remarks>
+        private static IEnumerator AssertProbesCrossEachWay(SteamNetworkingTransport serverTransport, SteamNetworkingTransport clientTransport, byte value)
+        {
+            byte answerValue = (byte)(value + 1);
+            int serverReceivedValue = -1;
+            int clientReceivedValue = -1;
+
+            void OnServerReceivedProbe(in MessageContext messageContext, SteamProbeMessage steamProbeMessage)
+            {
+                serverReceivedValue = steamProbeMessage.Value;
+                messageContext.SenderConnection.SendMessage(Channel.Reliable, new SteamProbeMessage { Value = answerValue });
+            }
+
+            void OnClientReceivedProbe(in MessageContext messageContext, SteamProbeMessage steamProbeMessage) => clientReceivedValue = steamProbeMessage.Value;
+
+            serverTransport.CoreManager.MessageManager.RegisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
+            clientTransport.CoreManager.MessageManager.RegisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+
+            clientTransport.CoreManager.TransportManager.TryGetServerConnection(out Connection serverConnection);
+            serverConnection.SendMessage(Channel.Reliable, new SteamProbeMessage { Value = value });
+
+            yield return WaitUntil(() => serverReceivedValue == value && clientReceivedValue == answerValue);
+
+            serverTransport.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
+            clientTransport.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+
+            Assert.AreEqual((int)value, serverReceivedValue, "The client's probe never reached the server.");
+            Assert.AreEqual((int)answerValue, clientReceivedValue, "The server's answer never reached the client.");
         }
 
         /// <summary>
@@ -781,6 +1046,21 @@ namespace Nucleus.Integrations.Unity.Tests
         }
 
         /// <summary>
+        /// Addresses an added peer's transport by IP on the given port.
+        /// </summary>
+        /// <param name="unityTransportManager">The peer's transport manager, its transport already added.</param>
+        /// <param name="port">The port the peer listens on, or connects to when its address names none.</param>
+        /// <returns>The peer's transport.</returns>
+        private static SteamNetworkingTransport UseIpAddressing(UnityTransportManager unityTransportManager, ushort port)
+        {
+            SteamNetworkingTransport steamNetworkingTransport = (SteamNetworkingTransport)unityTransportManager.GetComponent<UnityCoreManager>().CoreManager.TransportManager.Transports[0];
+            steamNetworkingTransport.Addressing = SteamAddressing.IpAddress;
+            steamNetworkingTransport.Configuration.Port = port;
+
+            return steamNetworkingTransport;
+        }
+
+        /// <summary>
         /// Creates an inactive object the teardown destroys.
         /// </summary>
         private GameObject NewInactiveObject(string objectName)
@@ -801,9 +1081,14 @@ namespace Nucleus.Integrations.Unity.Tests
         /// <summary>
         /// Waits until the condition holds, or the wait runs out.
         /// </summary>
-        private static IEnumerator WaitUntil(System.Func<bool> condition)
+        private static IEnumerator WaitUntil(System.Func<bool> condition) => WaitUntil(condition, MaximumWaitSeconds);
+
+        /// <summary>
+        /// Waits until the condition holds, or the given wait runs out.
+        /// </summary>
+        private static IEnumerator WaitUntil(System.Func<bool> condition, float maximumWaitSeconds)
         {
-            float deadlineSeconds = Time.realtimeSinceStartup + MaximumWaitSeconds;
+            float deadlineSeconds = Time.realtimeSinceStartup + maximumWaitSeconds;
 
             while (!condition() && Time.realtimeSinceStartup < deadlineSeconds)
                 yield return null;

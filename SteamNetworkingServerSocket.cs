@@ -114,6 +114,16 @@ namespace Nucleus.Integrations.Unity.Transports
         /// </summary>
         private const string RefusedReason = "Refused by the server.";
         /// <summary>
+        /// Why a client was refused for its Steam account already holding as many connections as the server allows one, as its own close
+        /// log reads.
+        /// </summary>
+        private const string SteamIdCapReason = "This Steam account already holds as many connections as the server allows.";
+        /// <summary>
+        /// Why a client was refused for a Steam ID Steam could not authenticate while connections are capped per account, as its own close
+        /// log reads.
+        /// </summary>
+        private const string UnauthenticatedSteamIdReason = "Steam could not authenticate this client's Steam ID, so the server cannot count it.";
+        /// <summary>
         /// Why a client was dropped by the server, as its own close log reads.
         /// </summary>
         private const string DisconnectedReason = "Disconnected by the server.";
@@ -469,13 +479,25 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
-        /// Queues a client Steam has connected, after the cap and an id allow it.
+        /// Queues a client Steam has connected, after the caps and an id allow it.
         /// </summary>
         /// <param name="steamConnection">The connection, already connected.</param>
-        /// <param name="remoteSteamId">The Steam ID of the peer on the other end.</param>
+        /// <param name="connectionInfo">Steam's description of the connection, naming the peer on the other end.</param>
         /// <returns>True when the client was queued; otherwise the connection has been closed.</returns>
-        private bool TryAdmit(HSteamNetConnection steamConnection, ulong remoteSteamId)
+        private bool TryAdmit(HSteamNetConnection steamConnection, in SteamNetConnectionInfo_t connectionInfo)
         {
+            ulong remoteSteamId = connectionInfo.m_identityRemote.GetSteamID64();
+
+            // Judged again here, as two links from one account can both pass the check made while they were connecting.
+            if (IsRefusedBySteamIdCap(in connectionInfo, out string steamIdCapReason))
+            {
+                Logger<SteamNetworkingServerSocket>.LogWarning($"Steam client [{remoteSteamId}] was refused: [{steamIdCapReason}].");
+
+                SteamSockets.CloseConnection(IsGameServer, steamConnection, steamIdCapReason, isLingerEnabled: false);
+
+                return false;
+            }
+
             if (IsConnectionCapReached() || !_idBySocketPool.EnsureRent(out uint idBySocket))
             {
                 Logger<SteamNetworkingServerSocket>.LogWarning($"Steam client [{remoteSteamId}] was refused: the server is full or has no id to give it.");
@@ -513,6 +535,61 @@ namespace Nucleus.Integrations.Unity.Transports
             int heldClientCount = _connectionsBySteamConnection.Count + (_pairedClientConnection is null ? 0 : 1);
 
             return heldClientCount >= maximumConnections;
+        }
+
+        /// <summary>
+        /// Returns whether a connected client is refused by <see cref="SteamNetworkingTransport.MaximumConnectionsPerSteamId"/>, and why.
+        /// </summary>
+        /// <param name="connectionInfo">Steam's description of the client's connection, once it has connected.</param>
+        /// <param name="refusalReason">Why the client is refused, as its own close log reads, or <see langword="null"/>.</param>
+        /// <returns>True when the client is refused.</returns>
+        /// <remarks>
+        /// A Steam ID Steam could not authenticate cannot be counted, so while a cap is set such a client is refused rather than let past it.
+        /// Either way the newcomer is the one refused: nobody already connected is closed to make room.
+        /// </remarks>
+        private bool IsRefusedBySteamIdCap(in SteamNetConnectionInfo_t connectionInfo, out string refusalReason)
+        {
+            refusalReason = null;
+
+            if (((SteamNetworkingTransport)Transport).MaximumConnectionsPerSteamId is SteamNetworkingTransport.UnsetMaximumConnectionsPerSteamId)
+                return false;
+
+            ulong steamId = connectionInfo.m_identityRemote.GetSteamID64();
+
+            if (steamId == SteamNetworkingTransport.UnsetSteamId || (connectionInfo.m_nFlags & Constants.k_nSteamNetworkConnectionInfoFlags_Unauthenticated) != 0)
+                refusalReason = UnauthenticatedSteamIdReason;
+            else if (IsSteamIdCapReached(steamId))
+                refusalReason = SteamIdCapReason;
+
+            return refusalReason is not null;
+        }
+
+        /// <summary>
+        /// Returns whether a Steam account already holds as many connections as
+        /// <see cref="SteamNetworkingTransport.MaximumConnectionsPerSteamId"/> allows.
+        /// </summary>
+        /// <param name="steamId">The account's Steam ID, as Steam reported it for the link asking to connect.</param>
+        /// <returns>True when one more connection from the account would pass the cap.</returns>
+        /// <remarks>
+        /// Counts the clients registered over Steam, each addressed by the Steam ID it was admitted as. The host's own client, paired in
+        /// process, holds no Steam connection and is not among them. Walked only as a client connects, never per packet.
+        /// </remarks>
+        private bool IsSteamIdCapReached(ulong steamId)
+        {
+            uint maximumConnectionsPerSteamId = ((SteamNetworkingTransport)Transport).MaximumConnectionsPerSteamId;
+
+            if (maximumConnectionsPerSteamId is SteamNetworkingTransport.UnsetMaximumConnectionsPerSteamId)
+                return false;
+
+            uint heldConnectionCount = 0;
+
+            foreach (Connection heldConnection in _steamConnectionsByConnection.Keys)
+            {
+                if (ulong.TryParse(heldConnection.RemoteAddress, out ulong heldSteamId) && heldSteamId == steamId)
+                    heldConnectionCount++;
+            }
+
+            return heldConnectionCount >= maximumConnectionsPerSteamId;
         }
 
         /// <summary>
@@ -607,6 +684,14 @@ namespace Nucleus.Integrations.Unity.Transports
                         return;
                     }
 
+                    // Counted now so a newcomer past its account's cap costs no handshake; whether Steam authenticated it is judged once it has connected.
+                    if (IsSteamIdCapReached(statusChanged.m_info.m_identityRemote.GetSteamID64()))
+                    {
+                        SteamSockets.CloseConnection(IsGameServer, steamConnection, SteamIdCapReason, isLingerEnabled: false);
+
+                        return;
+                    }
+
                     if (!((SteamNetworkingTransport)Transport).IsConnectingClientAllowed(statusChanged.m_info.m_identityRemote.GetSteamID64()))
                     {
                         SteamSockets.CloseConnection(IsGameServer, steamConnection, RefusedReason, isLingerEnabled: false);
@@ -632,7 +717,7 @@ namespace Nucleus.Integrations.Unity.Transports
                     if (statusChanged.m_info.m_hListenSocket != _listenSocket || _connectionsBySteamConnection.ContainsKey(steamConnection))
                         return;
 
-                    TryAdmit(steamConnection, statusChanged.m_info.m_identityRemote.GetSteamID64());
+                    TryAdmit(steamConnection, in statusChanged.m_info);
 
                     return;
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_ClosedByPeer:

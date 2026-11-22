@@ -148,6 +148,25 @@ namespace Nucleus.Integrations.Unity.Transports
         public bool ShareSteamIdsEnabled;
 
         /// <summary>
+        /// The most connections one Steam account may hold on the server at once, or <see cref="UnsetMaximumConnectionsPerSteamId"/> to
+        /// accept any number.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Counted by the Steam ID Steam authenticated for each link, so one account cannot fill the server. A connection past the cap is
+        /// refused, and no connection already held is ever closed to make room, so nobody can push another player off. While a cap is set,
+        /// a connection whose Steam ID Steam could not authenticate is refused too, since it cannot be counted. The host's own client,
+        /// paired in process, is not counted.
+        /// </para>
+        /// <para>
+        /// Read as each client connects, so a change applies to a running server. A client that crashes keeps its place until Steam times
+        /// its link out, ten seconds with Steam's own timeout, and the same account joins again after that. Several clients signed in to one
+        /// Steam account, as when testing on one machine, need this raised.
+        /// </para>
+        /// </remarks>
+        public uint MaximumConnectionsPerSteamId = DefaultMaximumConnectionsPerSteamId;
+
+        /// <summary>
         /// A check every client asking to connect passes before the engine hears of it, such as a ban list or lobby members only, or
         /// <see langword="null"/> to accept anyone while the server has room.
         /// </summary>
@@ -174,6 +193,16 @@ namespace Nucleus.Integrations.Unity.Transports
         /// The default for <see cref="SendRateKilobytesPerSecond"/>, four mebibytes a second, well inside an ordinary home or mobile line.
         /// </summary>
         public const uint DefaultSendRateKilobytesPerSecond = 4_096;
+
+        /// <summary>
+        /// The default for <see cref="MaximumConnectionsPerSteamId"/>: one connection for each Steam account.
+        /// </summary>
+        public const uint DefaultMaximumConnectionsPerSteamId = 1;
+
+        /// <summary>
+        /// The value of <see cref="MaximumConnectionsPerSteamId"/> that lets one Steam account hold any number of connections.
+        /// </summary>
+        public const uint UnsetMaximumConnectionsPerSteamId = 0;
 
         /// <summary>
         /// The Steam ID that names no account: on <see cref="RemoteSteamId"/> it means this peer's own server, and from

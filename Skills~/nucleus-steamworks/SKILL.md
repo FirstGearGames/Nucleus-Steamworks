@@ -53,6 +53,7 @@ Nucleus ships no lobby code. A Steam lobby only has to carry the host's Steam ID
 
 - Set `ConnectingClientFilter` on the **Steam Transport** to a method taking a `ulong steamId` and returning false to refuse it, for a ban list or lobby members only. It runs on the main thread inside Steam's callback pump, before the engine hears of the client. A handler that throws refuses the client, and the host's own client never asks. The refused client logs that it was refused, but cannot be told why; use `ClientAdmissionFilter` (below) for that.
 - **Maximum Connections** (0 accepts any number) refuses at accept once the server is full. A host's own client takes one place.
+- **Maximum Connections Per Steam Id** (`MaximumConnectionsPerSteamId`, 1 by default, 0 accepts any number) caps the connections one Steam account holds, counted by the Steam ID Steam authenticated for each link. A newcomer past it is refused and no connection already held is closed, so nobody can push another player off. While a cap is set, a link whose Steam ID Steam could not authenticate is refused. The host's own client is not counted. A crashed client holds its place until Steam times its link out, 10 seconds. Raise it to test several clients signed in to one Steam account against one server.
 
 ## Ticket authentication
 

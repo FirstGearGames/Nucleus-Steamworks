@@ -85,6 +85,7 @@ namespace Nucleus.Integrations.Unity.Editor
             EditorGUILayout.LabelField("Server", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_isGameServer"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_maximumConnections"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("_maximumConnectionsPerSteamId"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_maximumTransmissionUnit"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("_sendRateKilobytesPerSecond"));
 

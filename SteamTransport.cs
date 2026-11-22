@@ -174,6 +174,12 @@ namespace Nucleus.Integrations.Unity.Transports
         [Tooltip("Most clients the server accepts at once. 0 accepts any number.")]
         private uint _maximumConnections;
         /// <summary>
+        /// The most connections one Steam account may hold on the server at once.
+        /// </summary>
+        [SerializeField]
+        [Tooltip("Most connections one Steam account may hold on the server at once, so one account cannot fill it. A connection past this is refused; none already held is closed. 0 accepts any number. The host's own client is not counted. Raise it to test several clients signed in to one Steam account.")]
+        private uint _maximumConnectionsPerSteamId = DefaultMaximumConnectionsPerSteamId;
+        /// <summary>
         /// The largest datagram to build before it is split.
         /// </summary>
         [SerializeField]
@@ -227,6 +233,10 @@ namespace Nucleus.Integrations.Unity.Transports
         /// The send rate a new component starts at, four mebibytes a second, matching the transport's own default.
         /// </summary>
         private const uint DefaultSendRateKilobytesPerSecond = 4_096;
+        /// <summary>
+        /// The cap on each Steam account's connections a new component starts at, one, matching the transport's own default.
+        /// </summary>
+        private const uint DefaultMaximumConnectionsPerSteamId = 1;
 #if NUCLEUS_STEAMWORKS_ENABLED
 
         /// <inheritdoc/>
@@ -243,6 +253,7 @@ namespace Nucleus.Integrations.Unity.Transports
             _steamNetworkingTransport.RemoteAddress = _remoteAddress;
             _steamNetworkingTransport.IsGameServer = _isGameServer;
             _steamNetworkingTransport.SetMaximumConnections(_maximumConnections);
+            _steamNetworkingTransport.MaximumConnectionsPerSteamId = _maximumConnectionsPerSteamId;
             _steamNetworkingTransport.Configuration.Port = _port;
             _steamNetworkingTransport.SetBindAddress(_bindAddress);
             _steamNetworkingTransport.Configuration.MaximumTransmissionUnit = _maximumTransmissionUnit;
