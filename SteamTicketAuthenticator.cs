@@ -27,7 +27,9 @@ namespace Nucleus.Integrations.Unity.Transports
     /// Both sides run it. A client asks Steam for a ticket as soon as its link is up, and sends it once Steam says it is ready. The server
     /// begins an auth session bound to the link's Steam ID, so a forged ticket, or someone else's, is refused, and approves the client
     /// with that Steam ID as its identity once Steam answers. The host's own client, paired in process, is approved at once. Steam's answers
-    /// arrive inside its callback pump and are applied on <see cref="NetworkLoopSteps.LateVariableUpdate"/>.
+    /// arrive inside its callback pump and are applied on <see cref="NetworkLoopSteps.LateVariableUpdate"/>. An approving answer also names
+    /// the account that owns the game license, which differs from the player's under Family Sharing, and the transport keeps it for
+    /// <see cref="SteamNetworkingTransport.TryGetOwnerSteamId(Connection, out ulong)"/> before the client is approved.
     /// </para>
     /// <para>
     /// The <see cref="SteamTransport"/> component makes one when its Ticket Authentication is on. A transport set up from code makes one,
@@ -40,7 +42,10 @@ namespace Nucleus.Integrations.Unity.Transports
         /// Decides whether a connecting client may go on to the ticket check.
         /// </summary>
         /// <param name="connection">The client, which may be refused with a reason through <c>ServerManager.DenyClient(connection, notice)</c>.</param>
-        /// <param name="steamId">The Steam ID its link was authenticated as: the player, not the game's owner under Family Sharing.</param>
+        /// <param name="steamId">
+        /// The Steam ID its link was authenticated as: the player, not the game's owner under Family Sharing, which
+        /// <see cref="SteamNetworkingTransport.TryGetOwnerSteamId(Connection, out ulong)"/> reads once Steam has approved the ticket.
+        /// </param>
         /// <returns>True to go on, or false to refuse the client.</returns>
         public delegate bool ClientAdmissionFilterHandler(Connection connection, ulong steamId);
 
@@ -318,8 +323,12 @@ namespace Nucleus.Integrations.Unity.Transports
 
             if (authSessionResponse is EAuthSessionResponse.k_EAuthSessionResponseOK)
             {
-                if (!connection.IsAuthenticated)
-                    _coreManager.ServerManager.ApproveClient(connection, steamId.ToString());
+                if (connection.IsAuthenticated)
+                    return;
+
+                // Recorded ahead of the approval, so a handler told the client has authenticated can already ban by the license owner.
+                _steamNetworkingTransport.RecordOwnerSteamId(connection.Id, ticketResponse.m_OwnerSteamID.m_SteamID);
+                _coreManager.ServerManager.ApproveClient(connection, steamId.ToString());
 
                 return;
             }

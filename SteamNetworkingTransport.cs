@@ -249,6 +249,12 @@ namespace Nucleus.Integrations.Unity.Transports
         private readonly Dictionary<ulong, uint> _connectionIdsBySteamId = new();
 
         /// <summary>
+        /// The Steam ID of the account owning the game license each client plays on, by <see cref="Connection.Id"/>, for every client
+        /// Steam approved a ticket for on this server.
+        /// </summary>
+        private readonly Dictionary<uint, ulong> _ownerSteamIdsByConnectionId = new();
+
+        /// <summary>
         /// Whether this transport is subscribed to the engine's events, so a second shutdown leaves them alone.
         /// </summary>
         private bool _isSubscribed;
@@ -303,6 +309,38 @@ namespace Nucleus.Integrations.Unity.Transports
             connection = null;
 
             return _connectionIdsBySteamId.TryGetValue(steamId, out uint connectionId) && CoreManager.TransportManager.TryGetConnection(connectionId, out connection);
+        }
+
+        /// <summary>
+        /// Reads the Steam ID of the account that owns the game license a connected client plays on, which a ban list can check as well
+        /// as the client's own Steam ID.
+        /// </summary>
+        /// <param name="connectionId">The client's <see cref="Connection.Id"/>.</param>
+        /// <param name="ownerSteamId">
+        /// The license owner's Steam ID: the client's own, or under Family Sharing the account that lent it the game.
+        /// </param>
+        /// <returns>
+        /// True on a server running a <see cref="SteamTicketAuthenticator"/>, for each client Steam approved a ticket for. The host's own
+        /// client, admitted without a ticket, has none.
+        /// </returns>
+        /// <remarks>
+        /// Steam names the owner with its verdict on the ticket, and it is recorded before the client is approved, so a
+        /// <c>ServerManager.ClientAuthenticated</c> handler can already read it. A player borrowing the game plays under its own Steam ID, so
+        /// a ban list that checks Steam IDs alone lets a banned account come back by lending the game to another account.
+        /// </remarks>
+        public bool TryGetOwnerSteamId(uint connectionId, out ulong ownerSteamId) => _ownerSteamIdsByConnectionId.TryGetValue(connectionId, out ownerSteamId);
+
+        /// <summary>
+        /// Reads the Steam ID of the account that owns the game license a connected client plays on.
+        /// </summary>
+        /// <param name="connection">The client's Connection on this server.</param>
+        /// <param name="ownerSteamId">The license owner's Steam ID.</param>
+        /// <returns>True when this server knows it, as for <see cref="TryGetOwnerSteamId(uint, out ulong)"/>.</returns>
+        public bool TryGetOwnerSteamId(Connection connection, out ulong ownerSteamId)
+        {
+            ownerSteamId = UnsetSteamId;
+
+            return connection is not null && TryGetOwnerSteamId(connection.Id, out ownerSteamId);
         }
 
         /// <inheritdoc/>
@@ -446,6 +484,13 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
+        /// Records the account Steam named as owning the game license of a client whose ticket it approved.
+        /// </summary>
+        /// <param name="connectionId">The client's <see cref="Connection.Id"/>.</param>
+        /// <param name="ownerSteamId">The license owner's Steam ID, from Steam's verdict on the client's ticket.</param>
+        internal void RecordOwnerSteamId(uint connectionId, ulong ownerSteamId) => _ownerSteamIdsByConnectionId[connectionId] = ownerSteamId;
+
+        /// <summary>
         /// Writes the conditions set through <see cref="SetNetworkConditions"/> into Steam's simulation on each interface that is up.
         /// </summary>
         /// <remarks>
@@ -511,11 +556,14 @@ namespace Nucleus.Integrations.Unity.Transports
         }
 
         /// <summary>
-        /// Forgets a departing client's Steam ID on the server and tells the remaining clients.
+        /// Forgets a departing client's Steam ID and license owner on the server, and tells the remaining clients it left.
         /// </summary>
         /// <param name="connection">The departing client.</param>
         private void ServerManager_OnClientDisconnecting(Connection connection)
         {
+            // Forgotten on every departure: a client whose approval arrived while a kick was pending was never announced, so it holds an owner here and no Steam ID.
+            _ownerSteamIdsByConnectionId.Remove(connection.Id);
+
             if (!TryForgetSteamId(connection.Id))
                 return;
 
@@ -608,6 +656,7 @@ namespace Nucleus.Integrations.Unity.Transports
         {
             _steamIdsByConnectionId.Clear();
             _connectionIdsBySteamId.Clear();
+            _ownerSteamIdsByConnectionId.Clear();
         }
 
         /// <summary>

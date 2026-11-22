@@ -10,6 +10,7 @@ using Nucleus.Integrations.Newfarm;
 using Nucleus.Integrations.Unity.Managers.Core;
 using Nucleus.Integrations.Unity.Managers.Transports;
 using Nucleus.Integrations.Unity.Transports;
+using Nucleus.Managers.Core;
 using Nucleus.Managers.Messages;
 using Nucleus.Managers.Transports;
 using Nucleus.Transports;
@@ -225,6 +226,95 @@ namespace Nucleus.Integrations.Unity.Tests
             Assert.IsFalse(IsClientAuthenticated(clientTransportManagerCore), "A client the admission filter refused was admitted.");
             Assert.AreEqual(0, serverTransportManagerCore.ActiveConnections.Count, "The game server still holds a client the admission filter refused.");
 
+            serverAuthenticator.Deinitialize();
+            clientAuthenticator.Deinitialize();
+        }
+
+        /// <summary>
+        /// Ticket authentication records the account that owns the game license a client plays on, readable from the moment the server
+        /// announces the client, so a ban check on <c>ClientAuthenticated</c> can use it, and forgets it when the client leaves. For an
+        /// account that owns the game, as this machine's does, the owner is the client's own Steam ID.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        /// <remarks>The announcement is watched by a handler subscribed before the transport's own, so the owner cannot be recorded by it.</remarks>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator TicketAuthentication_RecordsTheLicenseOwner_BeforeTheClientIsAnnounced()
+        {
+            ulong ownSteamId = SteamUser.GetSteamID().m_SteamID;
+            ulong ownerSteamIdWhenAnnounced = SteamNetworkingTransport.UnsetSteamId;
+            ushort port = ProbeFreeUdpPort();
+            SteamNetworkingTransport serverTransport = null;
+
+            void OnClientAuthenticated(Connection connection) => serverTransport.TryGetOwnerSteamId(connection, out ownerSteamIdWhenAnnounced);
+
+            UnityTransportManager serverTransportManager = CreatePeer("SteamGameServer", string.Empty);
+            UnityTransportManager clientTransportManager = CreatePeer("SteamClient", $"127.0.0.1:{port}");
+            CoreManager serverCoreManager = serverTransportManager.GetComponent<UnityCoreManager>().CoreManager;
+
+            serverCoreManager.ServerManager.ClientAuthenticated += OnClientAuthenticated;
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            serverTransport = ConfigureTransport(serverTransportManager, isGameServer: true, SteamAddressing.IpAddress, port);
+            SteamNetworkingTransport clientTransport = ConfigureTransport(clientTransportManager, isGameServer: false, SteamAddressing.IpAddress, port);
+
+            SteamTicketAuthenticator serverAuthenticator = new();
+            serverAuthenticator.Initialize(serverTransport.CoreManager, serverTransport);
+            SteamTicketAuthenticator clientAuthenticator = new();
+            clientAuthenticator.Initialize(clientTransport.CoreManager, clientTransport);
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+
+            TransportManager serverTransportManagerCore = serverTransport.CoreManager.TransportManager;
+            TransportManager clientTransportManagerCore = clientTransport.CoreManager.TransportManager;
+
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore), MaximumWaitSeconds);
+            Assert.IsTrue(IsClientAuthenticated(clientTransportManagerCore), "The game server never admitted a client Steam vouches for.");
+
+            Connection remoteClientConnection = null;
+
+            foreach (Connection activeConnection in serverTransportManagerCore.ActiveConnections)
+                remoteClientConnection = activeConnection;
+
+            Assert.IsNotNull(remoteClientConnection, "The game server holds no client.");
+            Assert.AreEqual(ownSteamId.ToString(), remoteClientConnection.Identity, "The admitted client's identity is not its Steam ID.");
+
+            uint remoteClientConnectionId = remoteClientConnection.Id;
+
+            Assert.AreEqual(ownSteamId, ownerSteamIdWhenAnnounced, "The license owner could not be read when the client was announced.");
+            Assert.IsTrue(serverTransport.TryGetOwnerSteamId(remoteClientConnection, out ulong ownerSteamId), "The game server holds no license owner for its client.");
+            Assert.AreEqual(ownSteamId, ownerSteamId, "The license owner of an account that owns the game is not its own Steam ID.");
+            Assert.IsTrue(serverTransport.TryGetOwnerSteamId(remoteClientConnectionId, out ulong ownerSteamIdById) && ownerSteamIdById == ownSteamId, "The license owner could not be read by connection id.");
+
+            int serverReceivedValue = -1;
+            int clientReceivedValue = -1;
+
+            void OnServerReceivedProbe(in MessageContext messageContext, SteamProbeMessage steamProbeMessage) => serverReceivedValue = steamProbeMessage.Value;
+            void OnClientReceivedProbe(in MessageContext messageContext, SteamProbeMessage steamProbeMessage) => clientReceivedValue = steamProbeMessage.Value;
+
+            serverTransport.CoreManager.MessageManager.RegisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
+            clientTransport.CoreManager.MessageManager.RegisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+
+            clientTransportManagerCore.TryGetServerConnection(out Connection serverConnection);
+            serverConnection.SendMessage(Channel.Reliable, new SteamProbeMessage { Value = 33 });
+            remoteClientConnection.SendMessage(Channel.Reliable, new SteamProbeMessage { Value = 34 });
+
+            yield return WaitUntil(() => serverReceivedValue == 33 && clientReceivedValue == 34, MaximumWaitSeconds);
+            Assert.AreEqual(33, serverReceivedValue, "The client's message never reached the game server.");
+            Assert.AreEqual(34, clientReceivedValue, "The game server's message never reached the client.");
+
+            serverTransport.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
+            clientTransport.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnClientReceivedProbe);
+
+            yield return WaitForTask(clientTransport.DisconnectLocalConnectionAsync(Invoker.Client));
+            yield return WaitUntil(() => serverTransportManagerCore.ActiveConnections.Count == 0, MaximumWaitSeconds);
+            Assert.AreEqual(0, serverTransportManagerCore.ActiveConnections.Count, "The game server still held the client after it left.");
+            Assert.IsFalse(serverTransport.TryGetOwnerSteamId(remoteClientConnectionId, out ulong _), "The license owner outlived the client it was recorded for.");
+
+            serverCoreManager.ServerManager.ClientAuthenticated -= OnClientAuthenticated;
             serverAuthenticator.Deinitialize();
             clientAuthenticator.Deinitialize();
         }

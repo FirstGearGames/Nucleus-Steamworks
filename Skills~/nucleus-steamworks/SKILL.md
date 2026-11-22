@@ -61,6 +61,7 @@ Turn on **Ticket Authentication Enabled** on the server and on every client. Eac
 
 - A client with it off is dropped by a server with it on once `ServerManager.AuthenticationTimeoutSeconds` (30 by default) passes, because it never sends a ticket. A client with it on joins a server with it off unchecked.
 - Set `ClientAdmissionFilter` on the **Steam Transport**, a method taking `(Connection connection, ulong steamId)`, to refuse a player before its ticket is waited for, so a refused player costs no auth session. To tell the player why, call `ServerManager.DenyClient(connection, notice)` and return false. A handler that throws refuses the client. It runs only while Ticket Authentication is on.
+- `SteamNetworkingTransport.TryGetOwnerSteamId(connection, out ulong ownerSteamId)`, or by connection id, reads the account that owns the game license the client plays on, as Steam named it when approving the ticket: the client's own Steam ID, or under Family Sharing the lender's. It is readable from `ServerManager.ClientAuthenticated` on, so check a ban list against both IDs there; a ban on Steam IDs alone lets a banned account return by lending the game to another account. The host's own client has none.
 - A transport set up from code makes a `SteamTicketAuthenticator`, calls `Initialize(coreManager, transport)` once the transport is added, and `Deinitialize()` before it is removed.
 
 ## Packet limit
