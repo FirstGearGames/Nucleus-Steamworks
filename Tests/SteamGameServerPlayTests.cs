@@ -499,7 +499,6 @@ namespace Nucleus.Integrations.Unity.Tests
         /// </remarks>
         [UnityTest]
         [Timeout(120000)]
-        [Ignore("Held for Ben: the game server logs a warning for every SteamAuthRevokedNotice a client sends it, 20 for 20 here, because SteamTicketAuthenticator.OnRevokedNoticeReceived never checks that the notice came from the server, so one admitted client can fill the server's log with text of its choosing.")]
         public IEnumerator TicketAuthentication_RevokedNoticesSentByAClient_AreNotLoggedByTheServer()
         {
             const int NoticeCount = 20;

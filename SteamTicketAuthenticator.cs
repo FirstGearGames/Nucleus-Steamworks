@@ -305,8 +305,14 @@ namespace Nucleus.Integrations.Unity.Transports
         /// </summary>
         /// <param name="messageContext">The context the notice arrived in.</param>
         /// <param name="steamAuthRevokedNotice">The notice.</param>
-        private void OnRevokedNoticeReceived(in MessageContext messageContext, SteamAuthRevokedNotice steamAuthRevokedNotice) =>
+        /// <remarks>Only a server sends it; one from a client is ignored, since logging it would let any admitted client fill the server's log.</remarks>
+        private void OnRevokedNoticeReceived(in MessageContext messageContext, SteamAuthRevokedNotice steamAuthRevokedNotice)
+        {
+            if (!messageContext.IsSenderServer)
+                return;
+
             Logger<SteamTicketAuthenticator>.LogWarning($"The server kicked this client because Steam withdrew its approval: [{steamAuthRevokedNotice.Response}].");
+        }
 
         /// <summary>
         /// Approves or refuses a client as Steam judged its ticket.
