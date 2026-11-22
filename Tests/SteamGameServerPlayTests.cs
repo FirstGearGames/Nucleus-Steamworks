@@ -489,6 +489,130 @@ namespace Nucleus.Integrations.Unity.Tests
         }
 
         /// <summary>
+        /// A revoked notice is the server's word to a client it kicks, so the server ignores one that a client sends it rather than logging
+        /// it.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        /// <remarks>
+        /// The client sends the notices with a long text, as one filling the server's log would, and a probe after them; reliable messages
+        /// arrive in order, so once the probe has, every notice has been handled.
+        /// </remarks>
+        [UnityTest]
+        [Timeout(120000)]
+        [Ignore("Held for Ben: the game server logs a warning for every SteamAuthRevokedNotice a client sends it, 20 for 20 here, because SteamTicketAuthenticator.OnRevokedNoticeReceived never checks that the notice came from the server, so one admitted client can fill the server's log with text of its choosing.")]
+        public IEnumerator TicketAuthentication_RevokedNoticesSentByAClient_AreNotLoggedByTheServer()
+        {
+            const int NoticeCount = 20;
+            const string RevokedLogText = "because Steam withdrew its approval";
+
+            ushort port = ProbeFreeUdpPort();
+
+            UnityTransportManager serverTransportManager = CreatePeer("SteamGameServer", string.Empty);
+            UnityTransportManager clientTransportManager = CreatePeer("SteamClient", $"127.0.0.1:{port}");
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport serverTransport = ConfigureTransport(serverTransportManager, isGameServer: true, SteamAddressing.IpAddress, port);
+            SteamNetworkingTransport clientTransport = ConfigureTransport(clientTransportManager, isGameServer: false, SteamAddressing.IpAddress, port);
+
+            SteamTicketAuthenticator serverAuthenticator = new();
+            serverAuthenticator.Initialize(serverTransport.CoreManager, serverTransport);
+            SteamTicketAuthenticator clientAuthenticator = new();
+            clientAuthenticator.Initialize(clientTransport.CoreManager, clientTransport);
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+
+            TransportManager clientTransportManagerCore = clientTransport.CoreManager.TransportManager;
+
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore), MaximumWaitSeconds);
+            Assert.IsTrue(IsClientAuthenticated(clientTransportManagerCore), "The game server never admitted a client Steam vouches for.");
+
+            int serverLoggedCount = 0;
+            int serverReceivedValue = -1;
+
+            void OnLogMessageReceived(string condition, string stackTrace, LogType logType)
+            {
+                if (condition.Contains(RevokedLogText))
+                    serverLoggedCount++;
+            }
+
+            void OnServerReceivedProbe(in MessageContext messageContext, SteamProbeMessage steamProbeMessage) => serverReceivedValue = steamProbeMessage.Value;
+
+            serverTransport.CoreManager.MessageManager.RegisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
+            Application.logMessageReceived += OnLogMessageReceived;
+
+            clientTransportManagerCore.TryGetServerConnection(out Connection serverConnection);
+            string forgedResponse = new('x', 1_000);
+
+            for (int i = 0; i < NoticeCount; i++)
+                serverConnection.SendMessage(Channel.Reliable, new SteamAuthRevokedNotice { Response = forgedResponse });
+
+            serverConnection.SendMessage(Channel.Reliable, new SteamProbeMessage { Value = 41 });
+
+            yield return WaitUntil(() => serverReceivedValue == 41, MaximumWaitSeconds);
+
+            Application.logMessageReceived -= OnLogMessageReceived;
+            serverTransport.CoreManager.MessageManager.UnregisterMessageHandler<SteamProbeMessage>(OnServerReceivedProbe);
+            serverAuthenticator.Deinitialize();
+            clientAuthenticator.Deinitialize();
+
+            Assert.AreEqual(41, serverReceivedValue, "The probe sent after the notices never reached the game server.");
+            Assert.AreEqual(0, serverLoggedCount, $"The game server logged [{serverLoggedCount}] warnings for the [{NoticeCount}] revoked notices a client sent it.");
+        }
+
+        /// <summary>
+        /// A client dialling by IP with <see cref="SteamNetworkingTransport.RemoteSteamId"/> naming the server it expects refuses a server
+        /// Steam authenticated as anyone else, so an address that has changed hands, or anyone on the path, cannot pass for that server.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        /// <remarks>
+        /// The client expects this machine's own player account, which the game server it reaches is not. <see cref="SteamNetworkingTransport.RemoteSteamId"/>
+        /// is read here as the expected identity, which the transport ignores under IP addressing today.
+        /// </remarks>
+        [UnityTest]
+        [Timeout(120000)]
+        [Ignore("Held for Ben: a client dialling by IP is admitted by a server Steam authenticated as a different account from the one it expected, because nothing compares the server identity of its link with an expected one; this case reads RemoteSteamId as that expectation, which IP addressing ignores today.")]
+        public IEnumerator IpAddressing_AClientExpectingAnotherServer_RefusesTheOneItReached()
+        {
+            const float RefusalWaitSeconds = 5f;
+
+            ulong expectedSteamId = SteamUser.GetSteamID().m_SteamID;
+            ushort port = ProbeFreeUdpPort();
+
+            UnityTransportManager serverTransportManager = CreatePeer("SteamGameServer", string.Empty);
+            UnityTransportManager clientTransportManager = CreatePeer("SteamClient", $"127.0.0.1:{port}");
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport serverTransport = ConfigureTransport(serverTransportManager, isGameServer: true, SteamAddressing.IpAddress, port);
+            SteamNetworkingTransport clientTransport = ConfigureTransport(clientTransportManager, isGameServer: false, SteamAddressing.IpAddress, port);
+            clientTransport.RemoteSteamId = expectedSteamId;
+
+            TransportManager serverTransportManagerCore = serverTransport.CoreManager.TransportManager;
+            TransportManager clientTransportManagerCore = clientTransport.CoreManager.TransportManager;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+
+            ulong serverSteamId = serverTransport.ServerSteamId;
+
+            Assert.AreNotEqual(expectedSteamId, serverSteamId, "The game server is the account the client expects, so the case proves nothing.");
+
+            // A client refusing the server it reached logs why.
+            LogAssert.ignoreFailingMessages = true;
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore), RefusalWaitSeconds);
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.IsFalse(IsClientAuthenticated(clientTransportManagerCore), $"The client was admitted by a server Steam authenticated as [{serverSteamId}], not the [{expectedSteamId}] it expected.");
+            Assert.AreEqual(0, serverTransportManagerCore.ActiveConnections.Count, "The game server holds a client that expected another server.");
+        }
+
+        /// <summary>
         /// Creates a peer with a core manager, transport manager and Steam transport component, and activates it.
         /// </summary>
         /// <param name="objectName">The peer's object name.</param>
