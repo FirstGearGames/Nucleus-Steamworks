@@ -2,6 +2,7 @@
     "name": "Nucleus.Integrations.Unity.Steamworks.Editor",
     "rootNamespace": "Nucleus.Integrations.Unity.Editor",
     "references": [
+        "com.rlabrecque.steamworks.net",
         "Nucleus.Integrations.Unity.Steamworks",
         "Nucleus.Integrations.Unity",
         "Nucleus.Integrations.Unity.Editor"
@@ -20,6 +21,16 @@
             "name": "com.rlabrecque.steamworks.net",
             "expression": "",
             "define": "NUCLEUS_STEAMWORKS"
+        },
+        {
+            "name": "com.heathen.steamworksfoundation",
+            "expression": "",
+            "define": "NUCLEUS_HEATHEN_STEAMWORKS"
+        },
+        {
+            "name": "com.heathen.steamworks",
+            "expression": "",
+            "define": "NUCLEUS_HEATHEN_STEAMWORKS"
         }
     ],
     "noEngineReferences": false
