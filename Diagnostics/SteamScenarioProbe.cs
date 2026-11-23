@@ -208,7 +208,7 @@ namespace Nucleus.Integrations.Unity.Transports
         {
             string lines = string.Empty;
 
-            foreach (NucleusBehaviour nucleusBehaviour in FindObjectsByType<NucleusBehaviour>(FindObjectsSortMode.None))
+            foreach (NucleusBehaviour nucleusBehaviour in FindObjectsByType<NucleusBehaviour>())
             {
                 NetworkSystem networkSystem = nucleusBehaviour.NetworkSystem;
 
@@ -261,7 +261,7 @@ namespace Nucleus.Integrations.Unity.Transports
         /// <returns><see langword="true"/> when this client controls one.</returns>
         private static bool TryFindControlledPlayerObject(out NucleusBehaviour nucleusBehaviour)
         {
-            foreach (NucleusBehaviour candidate in FindObjectsByType<NucleusBehaviour>(FindObjectsSortMode.None))
+            foreach (NucleusBehaviour candidate in FindObjectsByType<NucleusBehaviour>())
             {
                 if (!candidate.IsController(ControllerType.Client))
                     continue;
