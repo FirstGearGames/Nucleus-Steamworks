@@ -32,6 +32,7 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 | Remote Steam Id | 0 | Who a client connects to by Steam ID. 0, or your own ID, joins your own server. |
 | Is Relay Only Enabled | on | Carry Steam ID and fake IP links over Valve's relay only, so no player learns another's IP address. Off lets Steam connect two players directly when their Steam settings allow it, which can lower ping. See **Relay only** below for what it costs. |
 | Remote Address | empty | Who a client connects to by IP or fake IP, optionally with a port such as `203.0.113.7:7777`. Host names are not looked up. |
+| Expected Server Steam Id | 0 | The Steam ID the server a client reaches by IP or fake IP must have, such as the one your server list shows beside the address. A server Steam authenticates as any other account is refused, so an address that now leads somewhere else cannot pass for your server. 0 accepts whichever server answers. Leave it at 0 when hosts migrate. |
 | Port | 7777 | The port the server listens on by IP, and the one a client uses when its address names none. |
 | Bind Address | empty | The local address the server listens on by IP. Empty listens on every interface. |
 | Is Game Server | off | Serve through Steam's game server interface. Turn it on for a dedicated server, leave it off when a player hosts. |
@@ -42,7 +43,7 @@ This folder is a Unity package (`com.firstgeargames.nucleus.steamworks`). Either
 | Ticket Authentication Enabled | off | Admit a client only once Steam confirms its auth session ticket: the account owns the game and is not banned. Server and clients both need it on. |
 | Share Steam Ids Enabled | off | Tell every client the Steam ID of every other client, for names, avatars and friend checks. Only the server's value counts. |
 
-`RemoteSteamId` and `RemoteAddress` can be changed at any time from code and apply at the next client start. While a server runs, the inspector shows where clients reach it, its Steam ID, fake IP address or port, with a **Copy** button.
+`RemoteSteamId`, `RemoteAddress` and `ExpectedServerSteamId` can be changed at any time from code and apply at the next client start. While a server runs, the inspector shows where clients reach it, its Steam ID, fake IP address or port, with a **Copy** button.
 
 The transport also reads three launch arguments, when your game calls `ApplyCommandLineArguments()` on it: `-address` sets `RemoteAddress`, `-steamid` sets `RemoteSteamId`, and `-port` sets the port.
 

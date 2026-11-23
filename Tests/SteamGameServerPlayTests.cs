@@ -562,17 +562,13 @@ namespace Nucleus.Integrations.Unity.Tests
         }
 
         /// <summary>
-        /// A client dialling by IP with <see cref="SteamNetworkingTransport.RemoteSteamId"/> naming the server it expects refuses a server
-        /// Steam authenticated as anyone else, so an address that has changed hands, or anyone on the path, cannot pass for that server.
+        /// A client dialling by IP with <see cref="SteamNetworkingTransport.ExpectedServerSteamId"/> naming the server it expects refuses a
+        /// server Steam authenticated as anyone else, so an address that has changed hands, or anyone on the path, cannot pass for that server.
         /// </summary>
         /// <returns>The coroutine driving the case.</returns>
-        /// <remarks>
-        /// The client expects this machine's own player account, which the game server it reaches is not. <see cref="SteamNetworkingTransport.RemoteSteamId"/>
-        /// is read here as the expected identity, which the transport ignores under IP addressing today.
-        /// </remarks>
+        /// <remarks>The client expects this machine's own player account, which the game server it reaches is not.</remarks>
         [UnityTest]
         [Timeout(120000)]
-        [Ignore("Held for Ben: a client dialling by IP is admitted by a server Steam authenticated as a different account from the one it expected, because nothing compares the server identity of its link with an expected one; this case reads RemoteSteamId as that expectation, which IP addressing ignores today.")]
         public IEnumerator IpAddressing_AClientExpectingAnotherServer_RefusesTheOneItReached()
         {
             const float RefusalWaitSeconds = 5f;
@@ -588,7 +584,7 @@ namespace Nucleus.Integrations.Unity.Tests
 
             SteamNetworkingTransport serverTransport = ConfigureTransport(serverTransportManager, isGameServer: true, SteamAddressing.IpAddress, port);
             SteamNetworkingTransport clientTransport = ConfigureTransport(clientTransportManager, isGameServer: false, SteamAddressing.IpAddress, port);
-            clientTransport.RemoteSteamId = expectedSteamId;
+            clientTransport.ExpectedServerSteamId = expectedSteamId;
 
             TransportManager serverTransportManagerCore = serverTransport.CoreManager.TransportManager;
             TransportManager clientTransportManagerCore = clientTransport.CoreManager.TransportManager;
@@ -609,6 +605,39 @@ namespace Nucleus.Integrations.Unity.Tests
 
             Assert.IsFalse(IsClientAuthenticated(clientTransportManagerCore), $"The client was admitted by a server Steam authenticated as [{serverSteamId}], not the [{expectedSteamId}] it expected.");
             Assert.AreEqual(0, serverTransportManagerCore.ActiveConnections.Count, "The game server holds a client that expected another server.");
+        }
+
+        /// <summary>
+        /// A client dialling by IP with <see cref="SteamNetworkingTransport.ExpectedServerSteamId"/> naming the server it reaches is admitted,
+        /// so the check refuses only a server that is not the one expected.
+        /// </summary>
+        /// <returns>The coroutine driving the case.</returns>
+        [UnityTest]
+        [Timeout(120000)]
+        public IEnumerator IpAddressing_AClientExpectingTheServerItReached_IsAdmitted()
+        {
+            const float AdmissionWaitSeconds = 10f;
+
+            ushort port = ProbeFreeUdpPort();
+
+            UnityTransportManager serverTransportManager = CreatePeer("SteamGameServer", string.Empty);
+            UnityTransportManager clientTransportManager = CreatePeer("SteamClient", $"127.0.0.1:{port}");
+
+            yield return WaitForTask(serverTransportManager.EnsureAddedAsync());
+            yield return WaitForTask(clientTransportManager.EnsureAddedAsync());
+
+            SteamNetworkingTransport serverTransport = ConfigureTransport(serverTransportManager, isGameServer: true, SteamAddressing.IpAddress, port);
+            SteamNetworkingTransport clientTransport = ConfigureTransport(clientTransportManager, isGameServer: false, SteamAddressing.IpAddress, port);
+            TransportManager clientTransportManagerCore = clientTransport.CoreManager.TransportManager;
+
+            yield return WaitForTask(serverTransportManager.StartServerAsync());
+
+            clientTransport.ExpectedServerSteamId = serverTransport.ServerSteamId;
+
+            yield return WaitForTask(clientTransportManager.StartClientAsync());
+            yield return WaitUntil(() => IsClientAuthenticated(clientTransportManagerCore), AdmissionWaitSeconds);
+
+            Assert.IsTrue(IsClientAuthenticated(clientTransportManagerCore), $"The client refused the server it expected, [{clientTransport.ExpectedServerSteamId}].");
         }
 
         /// <summary>

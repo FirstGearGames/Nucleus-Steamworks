@@ -69,7 +69,10 @@ namespace Nucleus.Integrations.Unity.Editor
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("_remoteSteamId"));
 
                 if (isIpAddressShown || isFakeIpShown)
+                {
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("_remoteAddress"));
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("_expectedServerSteamId"));
+                }
 
                 if (isSteamIdShown || isFakeIpShown)
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("_isRelayOnlyEnabled"));

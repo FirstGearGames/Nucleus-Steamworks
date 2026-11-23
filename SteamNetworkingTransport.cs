@@ -102,6 +102,25 @@ namespace Nucleus.Integrations.Unity.Transports
         public string RemoteAddress { get; set; } = string.Empty;
 
         /// <summary>
+        /// The Steam ID a client expects the server it reaches under <see cref="SteamAddressing.IpAddress"/> or
+        /// <see cref="SteamAddressing.FakeIp"/> to have, or <see cref="UnsetSteamId"/> to accept whichever server answers.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// An address says where a server is, not who it is: a stale server list, an address that has changed hands, or anyone on the path
+        /// can answer for it. Steam authenticates the Steam ID behind every link, and once a link connects the client compares that with
+        /// this, closing the link with a reason and logging both IDs when they differ or when Steam could not authenticate the server. Set
+        /// it to the Steam ID a server browser or lobby listed beside the address.
+        /// </para>
+        /// <para>
+        /// Read when the link connects. Unused under <see cref="SteamAddressing.SteamId"/>, where <see cref="RemoteSteamId"/> already names
+        /// the server and Steam refuses any other, and by a host's own client, which pairs with its server inside the process. Host migration
+        /// rejoins whichever player takes the session over, so leave it unset when hosts migrate.
+        /// </para>
+        /// </remarks>
+        public ulong ExpectedServerSteamId;
+
+        /// <summary>
         /// Whether the server side uses Steam's game server interface rather than the signed-in player's.
         /// </summary>
         /// <remarks>
@@ -214,8 +233,9 @@ namespace Nucleus.Integrations.Unity.Transports
         public const uint UnsetMaximumConnectionsPerSteamId = 0;
 
         /// <summary>
-        /// The Steam ID that names no account: on <see cref="RemoteSteamId"/> it means this peer's own server, and from
-        /// <see cref="SteamIdChanged"/> it means a client has left.
+        /// The Steam ID that names no account: on <see cref="RemoteSteamId"/> it means this peer's own server, on
+        /// <see cref="ExpectedServerSteamId"/> that whichever server answers is accepted, and from <see cref="SteamIdChanged"/> it means a
+        /// client has left.
         /// </summary>
         public const ulong UnsetSteamId = 0;
 

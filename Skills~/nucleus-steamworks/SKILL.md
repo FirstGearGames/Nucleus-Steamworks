@@ -26,6 +26,7 @@ A start throws, with a message saying why, while Steamworks.NET is missing or co
 | **Fake IP** (`FakeIp`) | A dedicated server whose real address stays hidden behind Valve's relay | The address Steam grants it, `ServerFakeAddress` | `RemoteAddress` to that address |
 
 - `RemoteAddress` must be an IP address. Host names are not looked up.
+- An address says where a server is, not who it is. Set `ExpectedServerSteamId` to the Steam ID a server list shows beside the address, and a client refuses any server Steam authenticates as another account. 0 accepts whichever server answers; leave it at 0 when hosts migrate.
 - `SteamTransport.RemoteSteamId` and `SteamTransport.RemoteAddress` can be set from code at any time and apply at the next client start. A client that is already connected keeps the server it dialled until it stops and starts again.
 - **Is Relay Only Enabled** (on by default) keeps Steam ID and fake IP links on Valve's relay, so no player learns another's IP address: Steam shares no ICE candidates. Off lets Steam connect two players directly when their Steam settings allow it, which can lower ping, since a relayed route between two players near each other costs about twice their ping to the nearest relay. It has no effect under IP Address. Scenes saved before it became the default keep their saved value.
 - While a server runs, the inspector shows where clients reach it, its Steam ID, fake IP address or port, with a **Copy** button.

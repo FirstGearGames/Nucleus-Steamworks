@@ -79,6 +79,27 @@ namespace Nucleus.Integrations.Unity.Transports
 #endif
             }
         }
+
+        /// <summary>
+        /// The Steam ID a client expects the server it reaches by IP or by fake IP to have, or zero to accept whichever server answers.
+        /// </summary>
+        /// <remarks>
+        /// A server Steam authenticates as another account is refused, so an address that leads somewhere else cannot pass for the server
+        /// meant. Accepted at any time and applied when the next link connects, including to the transport an earlier start built.
+        /// </remarks>
+        public ulong ExpectedServerSteamId
+        {
+            get => _expectedServerSteamId;
+            set
+            {
+                _expectedServerSteamId = value;
+#if NUCLEUS_STEAMWORKS_ENABLED
+
+                if (_steamNetworkingTransport is not null)
+                    _steamNetworkingTransport.ExpectedServerSteamId = value;
+#endif
+            }
+        }
 #if NUCLEUS_STEAMWORKS_ENABLED
 
         /// <summary>
@@ -149,6 +170,12 @@ namespace Nucleus.Integrations.Unity.Transports
         [SerializeField]
         [Tooltip("Address a client connects to, optionally with a port such as 203.0.113.7:7777; for a fake IP, the address the server logs. Leave empty on the host, whose own client joins its server inside the process. Host names are not looked up.")]
         private string _remoteAddress = string.Empty;
+        /// <summary>
+        /// The Steam ID a client expects the server it reaches by IP or by fake IP to have.
+        /// </summary>
+        [SerializeField]
+        [Tooltip("Steam ID the server a client reaches by IP or fake IP must have, such as the one a server browser listed beside its address. A server Steam authenticates as another account is refused. 0 accepts whichever server answers.")]
+        private ulong _expectedServerSteamId;
         /// <summary>
         /// The port the server listens on, and the port a client connects to when its address names none.
         /// </summary>
@@ -251,6 +278,7 @@ namespace Nucleus.Integrations.Unity.Transports
             _steamNetworkingTransport.Addressing = _addressing;
             _steamNetworkingTransport.RemoteSteamId = _remoteSteamId;
             _steamNetworkingTransport.RemoteAddress = _remoteAddress;
+            _steamNetworkingTransport.ExpectedServerSteamId = _expectedServerSteamId;
             _steamNetworkingTransport.IsGameServer = _isGameServer;
             _steamNetworkingTransport.SetMaximumConnections(_maximumConnections);
             _steamNetworkingTransport.MaximumConnectionsPerSteamId = _maximumConnectionsPerSteamId;

@@ -99,6 +99,10 @@ namespace Nucleus.Integrations.Unity.Transports
         /// Why this client closed its link, as the server's close log reads.
         /// </summary>
         private const string DisconnectedReason = "The client disconnected.";
+        /// <summary>
+        /// Why this client closed a link that reached a server other than the one it expected, as the server's close log reads.
+        /// </summary>
+        private const string UnexpectedServerReason = "The client expected a server with another Steam ID.";
 
         /// <summary>
         /// Creates a new instance.
@@ -240,6 +244,15 @@ namespace Nucleus.Integrations.Unity.Transports
             if (!_isSteamConnected)
             {
                 Logger<SteamNetworkingClientSocket>.LogError($"Could not connect to [{remoteTarget}]{(isShutDown ? ": Steam was shut down" : string.Empty)}.");
+
+                return Fail();
+            }
+
+            // Checked once the link is up, when Steam has authenticated whoever answered at the address.
+            if (isIpAddressing && !IsExpectedServer(steamNetworkingTransport.ExpectedServerSteamId, remoteTarget))
+            {
+                SteamSockets.CloseConnection(isGameServer: false, _steamConnection, UnexpectedServerReason, isLingerEnabled: false);
+                _steamConnection = HSteamNetConnection.Invalid;
 
                 return Fail();
             }
@@ -456,6 +469,30 @@ namespace Nucleus.Integrations.Unity.Transports
             serverIdentity = default;
 
             return _pairedServerSocket is null && _steamConnection != HSteamNetConnection.Invalid && SteamSockets.TryGetRemoteIdentity(isGameServer: false, _steamConnection, out serverIdentity);
+        }
+
+        /// <summary>
+        /// Returns whether the server this client's link reached is the one it expects, logging why not when it is not.
+        /// </summary>
+        /// <param name="expectedServerSteamId">The Steam ID the server must have, or <see cref="SteamNetworkingTransport.UnsetSteamId"/> to accept any.</param>
+        /// <param name="remoteTarget">Where the link was dialled, for the log.</param>
+        /// <returns>True when nothing is expected, or when Steam authenticated the server as the expected Steam ID.</returns>
+        private bool IsExpectedServer(ulong expectedServerSteamId, string remoteTarget)
+        {
+            if (expectedServerSteamId is SteamNetworkingTransport.UnsetSteamId)
+                return true;
+
+            SteamNetworkingSockets.GetConnectionInfo(_steamConnection, out SteamNetConnectionInfo_t connectionInfo);
+
+            ulong serverSteamId = connectionInfo.m_identityRemote.GetSteamID64();
+            bool isServerAuthenticated = (connectionInfo.m_nFlags & Constants.k_nSteamNetworkConnectionInfoFlags_Unauthenticated) == 0;
+
+            if (isServerAuthenticated && serverSteamId == expectedServerSteamId)
+                return true;
+
+            Logger<SteamNetworkingClientSocket>.LogWarning($"Refused the server at [{remoteTarget}]: Steam {(isServerAuthenticated ? $"authenticated it as [{serverSteamId}]" : "could not authenticate it")}, not as the expected [{expectedServerSteamId}].");
+
+            return false;
         }
 
         /// <summary>
